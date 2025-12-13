@@ -1005,139 +1005,38 @@ const proxyInput = blessed.textbox({
   style: {
     fg: "white",
     bg: "default",
-/* ================= CLEAN UI ================= */
-
-const screen = blessed.screen({
-  smartCSR: true,
-  title: "DIAM TESTNET AUTO BOT",
-  fullUnicode: true
+    border: { fg: "white" },
+    focus: { border: { fg: "green" } }
+  }
 });
 
-/* HEADER */
-const headerBox = blessed.box({
-  top: 0,
-  left: 0,
-  width: "100%",
+const reffSubmitButton = blessed.button({
+  parent: reffForm,
+  top: 13,
+  left: "center",
+  width: 10,
   height: 3,
-  tags: true,
-  content: "{center}{bold}DIAM TESTNET AUTO BOT{/bold}{/center}"
-});
-
-/* STATUS */
-const statusBox = blessed.box({
-  top: 3,
-  left: 0,
-  width: "100%",
-  height: 4,
-  tags: true,
-  content: "Status: Initializing..."
-});
-
-/* WALLET INFO */
-const walletBox = blessed.box({
-  top: 7,
-  left: 0,
-  width: "100%",
-  height: 4,
-  tags: true,
-  content: ""
-});
-
-/* LOG */
-const logBox = blessed.log({
-  top: 11,
-  left: 0,
-  width: "100%",
-  height: "100%-17",
-  scrollable: true,
-  alwaysScroll: true,
-  tags: true
-});
-
-/* MENU */
-const menuBox = blessed.list({
-  bottom: 0,
-  left: 0,
-  width: "100%",
-  height: 6,
-  keys: true,
-  mouse: true,
+  content: "Submit",
+  align: "center",
+  border: { type: "line" },
   style: {
-    selected: { bg: "green", fg: "black" }
-  },
-  items: [
-    "Start Auto Daily Activity",
-    "Create Auto Reff",
-    "Set Manual Config",
-    "Refresh Wallet Info",
-    "Clear Logs",
-    "Exit"
-  ]
+    fg: "white",
+    bg: "blue",
+    border: { fg: "white" },
+    hover: { bg: "green" },
+    focus: { bg: "green" }
+  }
 });
 
-/* APPEND */
 screen.append(headerBox);
 screen.append(statusBox);
 screen.append(walletBox);
 screen.append(logBox);
 screen.append(menuBox);
-
-/* ================= OVERRIDE RENDER FUNCTIONS ================= */
-
-function updateStatus() {
-  const status =
-    activityRunning
-      ? "Running"
-      : isCycleRunning
-        ? "Waiting for next cycle"
-        : "Idle";
-
-  statusBox.setContent(
-    `Status : ${status}\n` +
-    `Account: ${getShortAddress(walletInfo.address)}\n` +
-    `Balance: ${walletInfo.balanceDIAM} DIAM\n` +
-    `Accounts Loaded: ${addresses.length}`
-  );
-  screen.render();
-}
-
-async function updateWallets() {
-  walletBox.setContent(
-    `Active Account : ${getShortAddress(walletInfo.address)}\n` +
-    `Balance        : ${walletInfo.balanceDIAM} DIAM`
-  );
-  screen.render();
-}
-
-function updateLogs() {
-  logBox.setContent(transactionLogs.join("\n"));
-  logBox.setScrollPerc(100);
-  screen.render();
-}
-
-function updateMenu() {
-  menuBox.setItems(
-    isCycleRunning
-      ? ["Stop Activity", "Create Auto Reff", "Set Manual Config", "Refresh Wallet Info", "Clear Logs", "Exit"]
-      : ["Start Auto Daily Activity", "Create Auto Reff", "Set Manual Config", "Refresh Wallet Info", "Clear Logs", "Exit"]
-  );
-  screen.render();
-}
-
-/* ================= KEY HANDLER ================= */
-
-menuBox.on("select", async item => {
-  const action = item.getText();
-  // ⬇️ LOGIC ASLI TETAP
-});
-
-menuBox.focus();
-screen.render();
-
-screen.key(["escape", "q", "C-c"], () => {
-  addLog("Exiting application", "info");
-  process.exit(0);
-});
+screen.append(dailyActivitySubMenu);
+screen.append(repetitionsForm);
+screen.append(sendAmountConfigForm);
+screen.append(reffForm);
 
 if (!global.__neuraHandlersAttached) {
   global.__neuraHandlersAttached = true;
