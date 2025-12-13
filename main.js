@@ -906,5 +906,8 @@ screen.key(["escape", "q", "C-c"], () => {
   process.exit(0);
 });
 
+// LOAD RECIPIENT ADDRESS (WAJIB UNTUK SEND)
+recipientAddresses = loadRecipientAddresses();
+
 menuBox.focus();
 screen.render();
