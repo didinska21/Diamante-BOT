@@ -1,0 +1,22 @@
+{
+  "name": "diamante-testnet-bot",
+  "version": "1.0.0",
+  "description": "Diamante Testnet Auto Bot (Base Script)",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "blessed": "^0.1.81",
+    "figlet": "^1.8.0",
+    "ethers": "^6.13.4",
+    "@faker-js/faker": "^9.7.0",
+    "https-proxy-agent": "^7.0.4",
+    "socks-proxy-agent": "^8.0.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
