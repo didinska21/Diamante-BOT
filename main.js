@@ -804,6 +804,13 @@ screen.append(walletBox);
 screen.append(logBox);
 screen.append(menuBox);
 
+// === SAFE RENDER (COMPAT WITH BASE LOGIC) ===
+function safeRender() {
+  try {
+    screen.render();
+  } catch (e) {}
+}
+
 /* ================= UI UPDATE OVERRIDE ================= */
 
 function updateStatus() {
