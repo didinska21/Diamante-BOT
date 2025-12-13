@@ -1,38 +1,69 @@
 import blessed from "blessed";
 import fs from "fs";
-import { getAddress } from "ethers";
-import { loginAccount } from "./send.js";
+import { getAddress, isAddress } from "ethers";
+import { loginAccount, sendDiamFlow } from "./send.js";
 
-/* ================= CONFIG ================= */
+/* ================= FILE ================= */
 const USER_FILE = "user.txt";
+const WALLET_FILE = "wallet.txt";
 
-/* ================= STATE ================= */
-let addresses = [];
-let selectedIndex = 0;
-let logs = [];
+/* ================= VALIDATION ================= */
 
-/* ================= HELPERS ================= */
-function log(msg) {
-  logs.push(msg);
-  logBox.setContent(logs.join("\n"));
-  logBox.setScrollPerc(100);
-  screen.render();
-}
+function validateFile(file, required = true) {
+  if (!fs.existsSync(file)) {
+    if (required) {
+      console.error(`❌ File ${file} TIDAK ditemukan`);
+      process.exit(1);
+    } else {
+      console.warn(`⚠️ File ${file} tidak ditemukan (opsional)`);
+      return [];
+    }
+  }
 
-function loadAddresses() {
-  if (!fs.existsSync(USER_FILE)) return [];
-  return fs
-    .readFileSync(USER_FILE, "utf8")
+  const raw = fs
+    .readFileSync(file, "utf8")
     .split("\n")
     .map(v => v.trim())
-    .filter(v => v)
-    .map(v => getAddress(v));
+    .filter(v => v);
+
+  if (!raw.length) {
+    if (required) {
+      console.error(`❌ File ${file} kosong`);
+      process.exit(1);
+    } else {
+      console.warn(`⚠️ File ${file} kosong`);
+      return [];
+    }
+  }
+
+  const valid = [];
+  for (const addr of raw) {
+    if (!isAddress(addr)) {
+      console.error(`❌ Address INVALID di ${file}: ${addr}`);
+      process.exit(1);
+    }
+    valid.push(getAddress(addr));
+  }
+
+  console.log(`✅ ${file} valid (${valid.length} address)`);
+  return valid;
 }
 
+/* ================= RUN VALIDATION ================= */
+
+const USER_ADDRESSES = validateFile(USER_FILE, true);
+validateFile(WALLET_FILE, false);
+
+/* ================= STATE ================= */
+
+let logs = [];
+let activeWallet = USER_ADDRESSES[0];
+
 /* ================= UI ================= */
+
 const screen = blessed.screen({
   smartCSR: true,
-  title: "DIAM BOT"
+  title: "DIAM TESTNET BOT"
 });
 
 const header = blessed.box({
@@ -48,16 +79,18 @@ const walletBox = blessed.box({
   height: 4,
   width: "100%",
   tags: true,
-  content: "Wallet: -"
+  content:
+    `Wallet Loaded : ${USER_ADDRESSES.length}\n` +
+    `Active Wallet : ${activeWallet}`
 });
 
 const logBox = blessed.log({
   top: 7,
   height: "100%-13",
   width: "100%",
+  tags: true,
   scrollable: true,
-  alwaysScroll: true,
-  tags: true
+  alwaysScroll: true
 });
 
 const menu = blessed.list({
@@ -72,47 +105,53 @@ const menu = blessed.list({
     "Exit"
   ],
   style: {
-    selected: { bg: "green", fg: "black" }
+    selected: {
+      bg: "green",
+      fg: "black"
+    }
   }
 });
 
 /* ================= APPEND ================= */
+
 screen.append(header);
 screen.append(walletBox);
 screen.append(logBox);
 screen.append(menu);
 menu.focus();
 
-/* ================= ACTION ================= */
+/* ================= LOG ================= */
+
+function log(msg) {
+  logs.push(msg);
+  logBox.setContent(logs.join("\n"));
+  logBox.setScrollPerc(100);
+  screen.render();
+}
+
+/* ================= MENU ACTION ================= */
+
 menu.on("select", async item => {
   const action = item.getText();
 
   if (action === "Login Account") {
-    addresses = loadAddresses();
-    if (!addresses.length) {
-      log("❌ user.txt kosong");
-      return;
-    }
-
-    const addr = addresses[selectedIndex];
-    walletBox.setContent(`Wallet: ${addr}`);
-    screen.render();
-
-    log(`🔐 Login ${addr}`);
-    const ok = await loginAccount(addr);
+    log(`🔐 Login ${activeWallet}`);
+    const ok = await loginAccount(activeWallet);
     ok ? log("✅ Login sukses") : log("❌ Login gagal");
   }
 
   if (action === "Send DIAM") {
-    const mod = await import("./send.js");
-    await mod.sendDiamFlow(log);
+    await sendDiamFlow(log);
   }
 
   if (action === "Exit") {
     process.exit(0);
   }
+
+  menu.focus();
 });
 
 /* ================= EXIT ================= */
+
 screen.key(["q", "C-c"], () => process.exit(0));
 screen.render();
