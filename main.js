@@ -31,14 +31,6 @@ const CONFIG_DEFAULT_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 };
 
-let walletInfo = {
-  address: "N/A",
-  balanceDIAM: "0.00",
-  activeAccount: "N/A",
-  cycleCount: 0,
-  nextCycle: "N/A"
-};
-
 let transactionLogs = [];
 let activityRunning = false;
 let isCycleRunning = false;
@@ -168,7 +160,7 @@ function saveReffData() {
   } catch (error) {
     addLog(`Failed to save referral data: ${error.message}`, "error");
   }
-        }
+}
 // part 2
 
 process.on("unhandledRejection", (reason, promise) => {
@@ -308,7 +300,7 @@ function createAgent(proxyUrl) {
   return proxyUrl.startsWith("socks")
     ? new SocksProxyAgent(proxyUrl)
     : new HttpsProxyAgent(proxyUrl);
-      }
+}
 //part 4
 
 async function makeApiRequest(
