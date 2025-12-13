@@ -886,10 +886,11 @@ menuBox.on("select", async item => {
       dailyActivitySubMenu.show();
       break;
     case "Refresh Wallet Info":
-      loadAddresses();
-      await updateWallets();
-      addLog("Wallet refreshed", "success");
-      break;
+  loadAddresses();
+  recipientAddresses = loadRecipientAddresses();
+  await updateWallets();
+  addLog("Wallet refreshed", "success");
+  break;
     case "Clear Logs":
       clearTransactionLogs();
       break;
