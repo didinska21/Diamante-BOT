@@ -1660,3 +1660,5 @@ screen.key(["escape", "q", "C-c"], () => {
 
 menuBox.focus();
 screen.render();
+
+initialize();
