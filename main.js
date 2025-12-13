@@ -1482,83 +1482,181 @@ reffForm.on("submit", async () => {
       safeRender();
       return;
     }
-  } catch (error) {
-    addLog(`Invalid format: ${error.message}`, "error");
-    countInput.setValue("1");
-    screen.focusPush(countInput);
-    safeRender();
-    return;
+/* ================= CLEAN UI ================= */
+
+const screen = blessed.screen({
+  smartCSR: true,
+  title: "DIAM TESTNET AUTO BOT",
+  fullUnicode: true,
+  mouse: true
+});
+
+/* HEADER */
+const headerBox = blessed.box({
+  top: 0,
+  left: 0,
+  width: "100%",
+  height: 3,
+  tags: true,
+  content: "{center}{bold}DIAM TESTNET AUTO BOT{/bold}{/center}"
+});
+
+/* STATUS */
+const statusBox = blessed.box({
+  top: 3,
+  left: 0,
+  width: "100%",
+  height: 5,
+  tags: true,
+  content: "Status: Initializing..."
+});
+
+/* WALLET INFO */
+const walletBox = blessed.box({
+  top: 8,
+  left: 0,
+  width: "100%",
+  height: 4,
+  tags: true,
+  content: ""
+});
+
+/* LOG */
+const logBox = blessed.log({
+  top: 12,
+  left: 0,
+  width: "100%",
+  height: "100%-18",
+  tags: true,
+  scrollable: true,
+  alwaysScroll: true
+});
+
+/* MENU */
+const menuBox = blessed.list({
+  bottom: 0,
+  left: 0,
+  width: "100%",
+  height: 6,
+  keys: true,
+  mouse: true,
+  style: {
+    selected: {
+      bg: "green",
+      fg: "black"
+    }
+  },
+  items: [
+    "Start Auto Daily Activity",
+    "Create Auto Reff",
+    "Set Manual Config",
+    "Refresh Wallet Info",
+    "Clear Logs",
+    "Exit"
+  ]
+});
+
+/* APPEND */
+screen.append(headerBox);
+screen.append(statusBox);
+screen.append(walletBox);
+screen.append(logBox);
+screen.append(menuBox);
+
+/* ================= UI UPDATE OVERRIDE ================= */
+
+function updateStatus() {
+  const statusText =
+    activityRunning
+      ? "Running"
+      : isCycleRunning
+        ? "Waiting for next cycle"
+        : "Idle";
+
+  statusBox.setContent(
+    `Status   : ${statusText}\n` +
+    `Account  : ${getShortAddress(walletInfo.address)}\n` +
+    `Balance  : ${walletInfo.balanceDIAM} DIAM\n` +
+    `Accounts : ${addresses.length}`
+  );
+  screen.render();
+}
+
+async function updateWallets() {
+  walletBox.setContent(
+    `Active Account : ${getShortAddress(walletInfo.address)}\n` +
+    `Balance        : ${walletInfo.balanceDIAM} DIAM`
+  );
+  screen.render();
+}
+
+function updateLogs() {
+  logBox.setContent(transactionLogs.join("\n"));
+  logBox.setScrollPerc(100);
+  screen.render();
+}
+
+function updateMenu() {
+  menuBox.setItems(
+    isCycleRunning
+      ? [
+          "Stop Activity",
+          "Create Auto Reff",
+          "Set Manual Config",
+          "Refresh Wallet Info",
+          "Clear Logs",
+          "Exit"
+        ]
+      : [
+          "Start Auto Daily Activity",
+          "Create Auto Reff",
+          "Set Manual Config",
+          "Refresh Wallet Info",
+          "Clear Logs",
+          "Exit"
+        ]
+  );
+  screen.render();
+}
+
+/* ================= MENU HANDLER ================= */
+
+menuBox.on("select", async item => {
+  const action = item.getText();
+
+  switch (action) {
+    case "Start Auto Daily Activity":
+      if (!isCycleRunning) await runDailyActivity();
+      break;
+    case "Stop Activity":
+      shouldStop = true;
+      break;
+    case "Create Auto Reff":
+      reffForm.show(); // logic lama tetap
+      break;
+    case "Set Manual Config":
+      dailyActivitySubMenu.show();
+      break;
+    case "Refresh Wallet Info":
+      loadAddresses();
+      await updateWallets();
+      addLog("Wallet refreshed", "success");
+      break;
+    case "Clear Logs":
+      clearTransactionLogs();
+      break;
+    case "Exit":
+      process.exit(0);
   }
 
-  if (!referralCode) {
-    addLog("Referral code is required.", "error");
-    screen.focusPush(referralCodeInput);
-    safeRender();
-    return;
-  }
-
-  const proxiesForReff = proxiesText ? proxiesText.split(',').map(p => p.trim()).filter(p => p) : [];
-
-  reffForm.hide();
-  menuBox.show();
-  setTimeout(() => {
-    if (menuBox.visible) {
-      screen.focusPush(menuBox);
-      menuBox.select(0);
-      safeRender();
-    }
-  }, 100);
-
-  await runCreateAutoReff(referralCode, count, proxiesForReff);
+  menuBox.focus();
 });
 
-reffForm.key(["escape"], () => {
-  reffForm.hide();
-  menuBox.show();
-  setTimeout(() => {
-    if (menuBox.visible) {
-      screen.focusPush(menuBox);
-      menuBox.select(0);
-      safeRender();
-    }
-  }, 100);
-});
-
-dailyActivitySubMenu.key(["escape"], () => {
-  dailyActivitySubMenu.hide();
-  menuBox.show();
-  setTimeout(() => {
-    if (menuBox.visible) {
-      screen.focusPush(menuBox);
-      menuBox.select(0);
-      safeRender();
-    }
-  }, 100);
-});
-
+/* EXIT KEYS */
 screen.key(["escape", "q", "C-c"], () => {
   addLog("Exiting application", "info");
-  clearInterval(statusInterval);
   process.exit(0);
 });
 
-async function initialize() {
-  loadAccountData();
-  loadReffData();
-  loadConfig();
-  loadAddresses();
-  loadProxies();
-  recipientAddresses = loadRecipientAddresses();
-  updateStatus();
-  updateWallets();
-  updateLogs();
-  safeRender();
-  menuBox.focus();
-}
-
-setTimeout(() => {
-  adjustLayout();
-  screen.on("resize", adjustLayout);
-}, 100);
-
-initialize();
+menuBox.focus();
+screen.render();
