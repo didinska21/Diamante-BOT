@@ -1,21 +1,47 @@
 // ============================================================
-// FILE: src/ui/screen.js
+// FILE: src/ui/screen.js (FIXED VERSION)
 // ============================================================
 
 import blessed from 'blessed';
 
 /**
- * Create blessed screen
+ * Create blessed screen with terminal compatibility fixes
  * @returns {Object} Screen object
  */
 export function createScreen() {
+  // Fix terminal compatibility
+  if (!process.env.TERM || process.env.TERM === 'dumb') {
+    process.env.TERM = 'xterm-256color';
+  }
+
   const screen = blessed.screen({
     smartCSR: true,
     title: "DIAM TESTNET AUTO BOT",
     autoPadding: true,
     fullUnicode: true,
     mouse: true,
-    ignoreLocked: ["C-c", "q", "escape"]
+    ignoreLocked: ["C-c", "q", "escape"],
+    terminal: process.env.TERM || 'xterm-256color',
+    forceUnicode: true,
+    dockBorders: true,
+    warnings: false,
+    sendFocus: true,
+    useBCE: true
+  });
+
+  // Handle screen errors gracefully
+  screen.on('error', (err) => {
+    console.error('Terminal error (non-fatal):', err.message);
+  });
+
+  // Prevent crashes on terminal resize
+  process.on('SIGWINCH', () => {
+    try {
+      screen.alloc();
+      screen.render();
+    } catch (e) {
+      // Ignore resize errors silently
+    }
   });
 
   return screen;
@@ -423,4 +449,4 @@ export function createForms(screen) {
     proxyInput,
     reffSubmitButton
   };
-}
+    }
