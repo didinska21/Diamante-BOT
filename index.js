@@ -2,8 +2,8 @@
 // FILE: src/index.js (Main Entry Point)
 // ============================================================
 
-import { addLog, setUpdateLogsCallback } from './utils/logger.js';
-import { initializeState } from './utils/helpers.js';
+import { addLog, setUpdateLogsCallback } from './src/utils/logger.js';
+import { initializeState } from './src/utils/helpers.js';
 import {
   loadConfig,
   loadAccountData,
@@ -11,8 +11,8 @@ import {
   loadAddresses,
   loadProxies,
   loadRecipientAddresses
-} from './utils/fileLoader.js';
-import { updateWalletData } from './core/dailyActivity.js';
+} from './src/utils/fileLoader.js';
+import { updateWalletData } from './src/core/dailyActivity.js';
 import {
   createScreen,
   createHeaderBox,
@@ -22,7 +22,7 @@ import {
   createMenuBox,
   createDailyActivitySubMenu,
   createForms
-} from './ui/screen.js';
+} from './src/ui/screen.js';
 import {
   safeRender,
   renderHeader,
@@ -31,14 +31,14 @@ import {
   updateLogs,
   updateMenu,
   adjustLayout
-} from './ui/renderer.js';
+} from './src/ui/renderer.js';
 import {
   setupMenuHandlers,
   setupDailyActivitySubMenuHandlers,
   setupRepetitionsFormHandlers,
   setupSendAmountFormHandlers,
   setupReferralFormHandlers
-} from './ui/handlers.js';
+} from './src/ui/handlers.js';
 
 // ============================================================
 // Global State
