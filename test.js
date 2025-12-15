@@ -483,14 +483,6 @@ async function promptUser(question) {
     });
   });
                                             }
-
-async function countdown(seconds, message) {
-  for (let i = seconds; i > 0; i--) {
-    process.stdout.write(`\r${message} ${i} seconds...`);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  }
-  process.stdout.write(`\r${' '.repeat(60)}\r`); // Clear line
-}
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
