@@ -554,8 +554,8 @@ async function main() {
       const loginResult = await loginAccount(address, proxyUrl);
 
       if (loginResult.success && loginResult.verified) {
-        log(`⏳ Waiting 60 seconds before claiming faucet...`, "wait");
-        await countdown(60, "⏱️  Countdown:");
+        log(`⏳ Waiting 5 minutes before claiming faucet...`, "wait");
+        await countdown(300, "⏱️  Countdown:");
         
         const claimResult = await claimFaucet(address, proxyUrl);
         
