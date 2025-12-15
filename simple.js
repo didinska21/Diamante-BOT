@@ -99,6 +99,11 @@ function randomAmount(min, max) {
   return parseFloat((Math.random() * (max - min) + min).toFixed(4));
 }
 
+function generateRandomAddress() {
+  const wallet = Wallet.createRandom();
+  return wallet.address;
+}
+
 // ============================================================
 // FILE LOADERS
 // ============================================================
