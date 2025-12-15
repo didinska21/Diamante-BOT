@@ -2,7 +2,6 @@ import axios from "axios";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import { Wallet, getAddress } from "ethers";
-import { faker } from "@faker-js/faker";
 import fs from "fs";
 import readline from "readline";
 
@@ -409,9 +408,19 @@ async function createNewAccount(proxyUrl, referralCode = "") {
   const address = getAddress(wallet.address);
   const privateKey = wallet.privateKey;
   
+  // Generate random username without faker
+  const randomUsername = () => {
+    const adjectives = ['cool', 'fast', 'smart', 'brave', 'quick', 'wild', 'bright', 'dark'];
+    const nouns = ['tiger', 'eagle', 'wolf', 'fox', 'hawk', 'bear', 'lion', 'dragon'];
+    const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+    const noun = nouns[Math.floor(Math.random() * nouns.length)];
+    const num = Math.floor(Math.random() * 9999);
+    return `${adj}_${noun}${num}`;
+  };
+  
   const socialHandle = xAccounts.length > 0 
     ? xAccounts[Math.floor(Math.random() * xAccounts.length)]
-    : faker.internet.username();
+    : randomUsername();
 
   log(`🆕 Creating new account...`, "info");
   log(`📍 Address: ${getShortAddress(address)}`, "info");
