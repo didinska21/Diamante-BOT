@@ -62,11 +62,11 @@ function question(query) {
 function log(message, type = 'info') {
   const timestamp = new Date().toLocaleTimeString('id-ID');
   const colors = {
-    info: '\x1b[36m',
-    success: '\x1b[32m',
-    error: '\x1b[31m',
-    warn: '\x1b[33m',
-    highlight: '\x1b[35m',
+    info: '\x1b[36m',      // Cyan untuk info
+    success: '\x1b[32m',   // Hijau untuk sukses
+    error: '\x1b[31m',     // Merah untuk error/gagal
+    warn: '\x1b[33m',      // Kuning untuk warning
+    highlight: '\x1b[35m', // Magenta untuk highlight
     reset: '\x1b[0m'
   };
   
@@ -102,7 +102,7 @@ function printBanner() {
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
 `;
-  console.log('\x1b[36m' + banner + '\x1b[0m');
+  console.log('\x1b[35m' + banner + '\x1b[0m'); // Magenta untuk banner
 }
 
 function getShortAddress(address) {
@@ -133,7 +133,7 @@ async function countdown(seconds, message = "Waiting") {
     const progressBar = '█'.repeat(filledBars) + '░'.repeat(emptyBars);
     
     process.stdout.write(
-      `\r\x1b[33m${frames[frameIndex]} ${message}: [${progressBar}] ${timeStr} remaining...\x1b[0m`
+      `\r\x1b[36m${frames[frameIndex]} ${message}: [${progressBar}] ${timeStr} remaining...\x1b[0m`
     );
     
     frameIndex = (frameIndex + 1) % frames.length;
@@ -154,7 +154,7 @@ async function showLoading(message = "Processing", duration = 2000) {
   
   for (let i = 0; i < iterations; i++) {
     process.stdout.write(
-      `\r\x1b[36m${frames[frameIndex]} ${message}${dots[dotIndex]}\x1b[0m`
+      `\r\x1b[35m${frames[frameIndex]} ${message}${dots[dotIndex]}\x1b[0m`
     );
     frameIndex = (frameIndex + 1) % frames.length;
     dotIndex = Math.floor(i / 3) % dots.length;
@@ -554,7 +554,7 @@ async function sendDiam(fromAddress, toAddress, amount, proxyUrl = null) {
 
 async function processAccount(address, recipients, proxyUrl, accountIndex, totalAccounts) {
   console.log('\n' + '╔' + '═'.repeat(58) + '╗');
-  console.log(`║  \x1b[1m\x1b[36mAccount ${accountIndex + 1}/${totalAccounts}: ${getShortAddress(address)}\x1b[0m${' '.repeat(58 - 25 - String(accountIndex + 1).length - String(totalAccounts).length - getShortAddress(address).length)}║`);
+  console.log(`║  \x1b[1m\x1b[35mAccount ${accountIndex + 1}/${totalAccounts}: ${getShortAddress(address)}\x1b[0m${' '.repeat(58 - 25 - String(accountIndex + 1).length - String(totalAccounts).length - getShortAddress(address).length)}║`);
   console.log('╚' + '═'.repeat(58) + '╝');
 
   const loginSuccess = await loginAccount(address, proxyUrl);
@@ -564,7 +564,7 @@ async function processAccount(address, recipients, proxyUrl, accountIndex, total
   }
 
   const balance = await getBalance(address, proxyUrl);
-  log(`Current balance: 💰 ${balance.toFixed(4)} DIAM`, 'highlight');
+  log(`Current balance: 💰 ${balance.toFixed(4)} DIAM`, 'info');
 
   const totalNeeded = CONFIG.sendAmountMax * CONFIG.sendCount;
   if (balance < totalNeeded) {
@@ -591,7 +591,7 @@ async function processAccount(address, recipients, proxyUrl, accountIndex, total
     console.log('\n' + '┌' + '─'.repeat(58) + '┐');
     console.log(`│  \x1b[1mTransaction ${i + 1}/${CONFIG.sendCount}\x1b[0m${' '.repeat(58 - 15 - String(i + 1).length - String(CONFIG.sendCount).length)}│`);
     console.log('└' + '─'.repeat(58) + '┘');
-    log(`Amount: 💸 ${amount} DIAM → ${getShortAddress(recipient)}`, 'highlight');
+    log(`Amount: 💸 ${amount} DIAM → ${getShortAddress(recipient)}`, 'info');
     
     const success = await sendDiam(address, recipient, amount, proxyUrl);
     
@@ -606,7 +606,7 @@ async function processAccount(address, recipients, proxyUrl, accountIndex, total
   log(`Account Summary: ${successCount}/${CONFIG.sendCount} successful ✨`, 'success');
   
   const finalBalance = await getBalance(address, proxyUrl);
-  log(`Final balance: 💰 ${finalBalance.toFixed(4)} DIAM (Used: ${(balance - finalBalance).toFixed(4)} DIAM)`, 'highlight');
+  log(`Final balance: 💰 ${finalBalance.toFixed(4)} DIAM (Used: ${(balance - finalBalance).toFixed(4)} DIAM)`, 'info');
   console.log('─'.repeat(60));
 }
 
@@ -649,7 +649,7 @@ async function main() {
   rl.close();
 
   console.log('\n' + '═'.repeat(60));
-  log('🚀 Starting bot in 3 seconds...', 'highlight');
+  log('🚀 Starting bot in 3 seconds...', 'info');
   console.log('═'.repeat(60) + '\n');
   await countdown(3, 'Starting in');
 
