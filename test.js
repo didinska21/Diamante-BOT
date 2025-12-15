@@ -693,9 +693,6 @@ async function main() {
     }
 
     // Step 3: Send to main wallet
-    log("\n💸 STEP
-
-    // Step 3: Send to main wallet
     log("\n💸 STEP 3: Sending all to main wallet...", "info");
     let totalSent = 0;
     let sendSuccessCount = 0;
