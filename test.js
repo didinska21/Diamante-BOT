@@ -355,6 +355,15 @@ async function claimFaucet(address, proxyUrl) {
           log(`💰 Current balance: ${balance.toFixed(4)} DIAM`, "info");
           return { success: false, alreadyClaimed: true, balance };
         }
+        if (response.data.message.includes("network guardians") || response.data.message.includes("Something went wrong")) {
+          log(`⚠️  Rate limited, waiting longer... (${response.data.message})`, "wait");
+          if (attempt < 5) {
+            const waitTime = 10000 + (attempt * 5000); // 10s, 15s, 20s, 25s
+            log(`⏳ Waiting ${waitTime/1000} seconds before retry...`, "wait");
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            continue;
+          }
+        }
         log(`❌ Attempt ${attempt}/5 failed: ${response.data.message}`, "error");
       }
     } catch (error) {
@@ -362,8 +371,8 @@ async function claimFaucet(address, proxyUrl) {
     }
     
     if (attempt < 5) {
-      log(`⏳ Retrying in 3 seconds...`, "wait");
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      log(`⏳ Retrying in 5 seconds...`, "wait");
+      await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }
   
@@ -453,7 +462,13 @@ async function createNewAccount(proxyUrl, referralCode = "") {
   return { success: false };
 }
 
-async function promptUser(question) {
+async function countdown(seconds, message) {
+  for (let i = seconds; i > 0; i--) {
+    process.stdout.write(`\r${message} ${i} seconds...`);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  process.stdout.write(`\r${' '.repeat(60)}\r`); // Clear line
+}
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
@@ -537,7 +552,9 @@ async function main() {
       const loginResult = await loginAccount(address, proxyUrl);
 
       if (loginResult.success && loginResult.verified) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        log(`⏳ Waiting 60 seconds before claiming faucet...`, "wait");
+        await countdown(60, "⏱️  Countdown:");
+        
         const claimResult = await claimFaucet(address, proxyUrl);
         
         if (claimResult.success) {
@@ -555,8 +572,8 @@ async function main() {
       console.log(`\x1b[1m\x1b[35m└${"─".repeat(59)}\x1b[0m\n`);
 
       if (i < addresses.length - 1) {
-        log(`⏳ Waiting 5 seconds before next account...\n`, "wait");
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        log(`⏳ Waiting 60 seconds before next account...\n`, "wait");
+        await countdown(60, "⏱️  Countdown:");
       }
     }
 
@@ -606,6 +623,9 @@ async function main() {
 
         if (balance > 0.1) {
           const amountToSend = balance - 0.05;
+          log(`⏳ Waiting 60 seconds before sending...`, "wait");
+          await countdown(60, "⏱️  Countdown:");
+          
           log(`📤 Sending ${amountToSend.toFixed(4)} DIAM to main wallet...`, "wait");
           
           const sendSuccess = await sendDiam(address, mainWallet, amountToSend, proxyUrl);
@@ -621,8 +641,8 @@ async function main() {
       console.log(`\x1b[1m\x1b[35m└${"─".repeat(59)}\x1b[0m\n`);
 
       if (i < addresses.length - 1) {
-        log(`⏳ Waiting 5 seconds before next account...\n`, "wait");
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        log(`⏳ Waiting 60 seconds before next account...\n`, "wait");
+        await countdown(60, "⏱️  Countdown:");
       }
     }
 
@@ -671,6 +691,9 @@ async function main() {
       console.log(`\x1b[1m\x1b[35m└${"─".repeat(59)}\x1b[0m\n`);
       if (i < addresses.length - 1) await new Promise(resolve => setTimeout(resolve, 5000));
     }
+
+    // Step 3: Send to main wallet
+    log("\n💸 STEP
 
     // Step 3: Send to main wallet
     log("\n💸 STEP 3: Sending all to main wallet...", "info");
