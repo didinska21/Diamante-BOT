@@ -458,8 +458,8 @@ async function createNewAccount(proxyUrl, proxyAuth, referralCode = "") {
   const privateKey = wallet.privateKey;
   
   const randomUsername = () => {
-    const adj = ['cool', 'fast', 'smart', 'brave', 'quick', 'wild', 'bright'];
-    const noun = ['tiger', 'eagle', 'wolf', 'fox', 'hawk', 'bear', 'lion'];
+    const adj = ['cool', 'choco', 'matcha', 'vanilla', 'coffee', 'tea', 'juice'];
+    const noun = ['sky', 'weather', 'mountain', 'camp', 'tent', 'view', 'beauty'];
     return `${adj[Math.floor(Math.random() * adj.length)]}_${noun[Math.floor(Math.random() * noun.length)]}${Math.floor(Math.random() * 9999)}`;
   };
   
