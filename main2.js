@@ -375,6 +375,37 @@ async function loginWithBrowser(page, address) {
   try {
     log('Navigating to campaign page...', 'info');
     
+    // Enable request interception untuk capture response headers
+    await page.setRequestInterception(true);
+    
+    let capturedToken = null;
+    
+    // Intercept responses untuk capture Set-Cookie header
+    page.on('response', async (response) => {
+      const url = response.url();
+      if (url.includes('/user/connect-wallet')) {
+        try {
+          const headers = response.headers();
+          const setCookie = headers['set-cookie'];
+          
+          if (setCookie) {
+            log('Captured Set-Cookie header!', 'success');
+            const match = setCookie.match(/access_token=([^;]+)/);
+            if (match) {
+              capturedToken = match[1];
+              log(`Token captured: ${capturedToken.substring(0, 20)}...`, 'info');
+            }
+          }
+        } catch (error) {
+          // Ignore
+        }
+      }
+    });
+    
+    page.on('request', request => {
+      request.continue();
+    });
+    
     // Navigate ke campaign page
     await page.goto(CAMPAIGN_URL, { 
       waitUntil: 'networkidle0',
@@ -382,11 +413,9 @@ async function loginWithBrowser(page, address) {
     });
 
     log('Waiting for Cloudflare...', 'info');
-    
-    // Wait lebih lama untuk Cloudflare challenge
     await sleep(10000);
 
-    // Check if Cloudflare is present
+    // Check Cloudflare
     const isCloudflare = await page.evaluate(() => {
       return document.body.innerText.includes('Cloudflare') || 
              document.body.innerText.includes('Just a moment') ||
@@ -394,29 +423,25 @@ async function loginWithBrowser(page, address) {
     });
 
     if (isCloudflare) {
-      log('Cloudflare detected, waiting for challenge...', 'warn');
+      log('Cloudflare detected, waiting...', 'warn');
       
-      // Wait sampai Cloudflare selesai (max 60 detik)
       try {
         await page.waitForFunction(
           () => {
             return !document.body.innerText.includes('Cloudflare') &&
-                   !document.body.innerText.includes('Just a moment') &&
-                   !document.title.includes('Just a moment');
+                   !document.body.innerText.includes('Just a moment');
           },
           { timeout: 60000 }
         );
         log('Cloudflare passed!', 'success');
       } catch (error) {
-        log('Cloudflare timeout, continuing anyway...', 'warn');
+        log('Cloudflare timeout, continuing...', 'warn');
       }
       
       await sleep(5000);
     } else {
       log('No Cloudflare detected', 'success');
     }
-
-    log('Preparing login request...', 'info');
 
     const checksummedAddress = getAddress(address);
     
@@ -447,14 +472,14 @@ async function loginWithBrowser(page, address) {
 
     log('Sending login request...', 'info');
 
-    // Kirim request dengan fetch di browser context
+    // Kirim request
     const response = await page.evaluate(async (apiUrl, data) => {
       try {
         const res = await fetch(apiUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Accept': 'application/json, text/plain, */*',
+            'Accept': 'application/json',
             'Origin': 'https://campaign.diamante.io',
             'Referer': 'https://campaign.diamante.io/'
           },
@@ -463,7 +488,6 @@ async function loginWithBrowser(page, address) {
         });
 
         const text = await res.text();
-        
         let jsonData;
         try {
           jsonData = JSON.parse(text);
@@ -471,15 +495,10 @@ async function loginWithBrowser(page, address) {
           jsonData = { error: 'Parse failed', raw: text.substring(0, 200) };
         }
 
-        // Get all cookies
-        const cookieString = document.cookie;
-
         return {
           status: res.status,
           ok: res.ok,
-          data: jsonData,
-          cookies: cookieString,
-          headers: Object.fromEntries(res.headers.entries())
+          data: jsonData
         };
       } catch (error) {
         return {
@@ -492,80 +511,103 @@ async function loginWithBrowser(page, address) {
 
     log(`Response status: ${response.status}`, 'info');
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${JSON.stringify(response.data).substring(0, 200)}`);
+    if (!response.ok || !response.data?.success) {
+      throw new Error(`Login failed: ${JSON.stringify(response.data)}`);
     }
 
-    if (response.data && response.data.success) {
-      const userId = response.data.data.userId;
-      
-      // Wait sebentar untuk cookies diset
-      await sleep(2000);
-      
-      // Get cookies dari browser
+    const userId = response.data.data.userId;
+    
+    // Wait untuk token di-capture dari response headers
+    await sleep(3000);
+    
+    let accessToken = capturedToken;
+    
+    // Fallback 1: Check cookies
+    if (!accessToken) {
       const cookies = await page.cookies();
-      log(`Found ${cookies.length} cookies`, 'info');
-      
-      // Cari access_token
-      let accessToken = null;
-      const accessTokenCookie = cookies.find(c => c.name === 'access_token');
-      
-      if (accessTokenCookie) {
-        accessToken = accessTokenCookie.value;
-        log('Access token found in cookies', 'success');
-      } else {
-        // Try to get from document.cookie
-        const cookieFromPage = await page.evaluate(() => {
-          const match = document.cookie.match(/access_token=([^;]+)/);
-          return match ? match[1] : null;
+      const tokenCookie = cookies.find(c => c.name === 'access_token');
+      if (tokenCookie) {
+        accessToken = tokenCookie.value;
+        log('Token from cookies', 'success');
+      }
+    }
+    
+    // Fallback 2: Check document.cookie
+    if (!accessToken) {
+      accessToken = await page.evaluate(() => {
+        const match = document.cookie.match(/access_token=([^;]+)/);
+        return match ? match[1] : null;
+      });
+      if (accessToken) {
+        log('Token from document.cookie', 'success');
+      }
+    }
+    
+    // Fallback 3: Check response data
+    if (!accessToken && response.data.data.token) {
+      accessToken = response.data.data.token;
+      log('Token from response data', 'success');
+    }
+
+    if (!accessToken) {
+      throw new Error('Could not capture access token from any source');
+    }
+
+    // Set cookie secara manual dengan token yang valid
+    await page.setCookie({
+      name: 'access_token',
+      value: accessToken,
+      domain: '.diamante.io',
+      path: '/',
+      httpOnly: false,
+      secure: true,
+      sameSite: 'None'
+    });
+
+    // Verify token works
+    log('Verifying token...', 'info');
+    const verifyResponse = await page.evaluate(async (apiUrl, uid) => {
+      try {
+        const res = await fetch(`${apiUrl}/transaction/get-balance/${uid}`, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+            'Origin': 'https://campaign.diamante.io',
+            'Referer': 'https://campaign.diamante.io/'
+          },
+          credentials: 'include'
         });
         
-        if (cookieFromPage) {
-          accessToken = cookieFromPage;
-          log('Access token found in document.cookie', 'success');
-        }
+        const data = await res.json();
+        return { ok: res.ok, data };
+      } catch (error) {
+        return { ok: false, error: error.message };
       }
+    }, API_BASE_URL, userId);
 
-      // Jika masih tidak ada, coba extract dari response
-      if (!accessToken && response.data.data.token) {
-        accessToken = response.data.data.token;
-        log('Using token from response data', 'success');
-      }
-
-      if (!accessToken) {
-        // Last resort: set cookie manually
-        log('Setting cookie manually...', 'warn');
-        const manualToken = `temp_${Date.now()}_${Math.random().toString(36).substr(2)}`;
-        await page.setCookie({
-          name: 'access_token',
-          value: manualToken,
-          domain: 'campapi.diamante.io',
-          path: '/',
-          httpOnly: true,
-          secure: true
-        });
-        accessToken = manualToken;
-      }
-
-      accountTokens[checksummedAddress] = {
-        userId: userId,
-        accessToken: accessToken
-      };
-
-      log(`✓ Login success: ${getShortAddress(checksummedAddress)}`, 'success');
-      log(`UserID: ${userId}`, 'info');
-      return true;
-    } else {
-      throw new Error(response.data?.message || 'Login failed - no success flag');
+    if (!verifyResponse.ok) {
+      throw new Error(`Token verification failed: ${JSON.stringify(verifyResponse)}`);
     }
+
+    accountTokens[checksummedAddress] = {
+      userId: userId,
+      accessToken: accessToken
+    };
+
+    log(`✓ Login success: ${getShortAddress(checksummedAddress)}`, 'success');
+    log(`UserID: ${userId}`, 'info');
+    log(`Token verified: ${accessToken.substring(0, 20)}...`, 'success');
+    
+    return true;
+    
   } catch (error) {
     log(`Login failed: ${error.message}`, 'error');
     
-    // Debug: Screenshot untuk troubleshooting
+    // Debug screenshot
     try {
       const screenshotPath = `/root/Diamante-BOT/debug_${Date.now()}.png`;
-      await page.screenshot({ path: screenshotPath });
-      log(`Screenshot saved: ${screenshotPath}`, 'info');
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+      log(`Screenshot: ${screenshotPath}`, 'info');
     } catch {}
     
     return false;
