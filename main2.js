@@ -232,7 +232,10 @@ async function initBrowser(proxyUrl = null) {
       '--disable-accelerated-2d-canvas',
       '--disable-gpu',
       '--window-size=1920,1080',
-      '--disable-blink-features=AutomationControlled'
+      '--disable-blink-features=AutomationControlled',
+      '--disable-software-rasterizer',
+      '--single-process', // Important for VPS with limited resources
+      '--no-zygote'
     ];
 
     if (proxyUrl) {
@@ -244,15 +247,41 @@ async function initBrowser(proxyUrl = null) {
       }
     }
 
-    browser = await puppeteer.launch({
+    const launchOptions = {
       headless: CONFIG.headless ? 'new' : false,
       args: args,
       slowMo: CONFIG.slowMo,
       defaultViewport: {
         width: 1920,
         height: 1080
+      },
+      ignoreDefaultArgs: ['--disable-extensions'],
+      ignoreHTTPSErrors: true
+    };
+
+    // Try to use system Chrome if available (better for VPS)
+    const chromePaths = [
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/google-chrome',
+      '/usr/bin/chromium-browser',
+      '/usr/bin/chromium',
+      '/snap/bin/chromium'
+    ];
+
+    let executablePath = null;
+    for (const path of chromePaths) {
+      if (fs.existsSync(path)) {
+        executablePath = path;
+        log(`Using system Chrome: ${path}`, 'info');
+        break;
       }
-    });
+    }
+
+    if (executablePath) {
+      launchOptions.executablePath = executablePath;
+    }
+
+    browser = await puppeteer.launch(launchOptions);
 
     log('Browser initialized', 'success');
     return browser;
