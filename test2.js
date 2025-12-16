@@ -232,18 +232,22 @@ async function testProxy(proxyUrl) {
   }
 }
 
-// Enhanced request with anti-bot bypass
+// Enhanced request with AGGRESSIVE anti-bot bypass
 async function makeApiRequest(method, url, data, proxyUrl, customHeaders = {}, maxRetries = 5) {
   let lastError = null;
-  const fingerprint = generateFingerprint();
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
+      // Generate NEW fingerprint per attempt (important for 403 bypass)
+      const fingerprint = generateFingerprint();
       const agent = proxyUrl ? createAgent(proxyUrl) : null;
       const headers = getRequestHeaders(fingerprint, customHeaders);
       
-      // Random delay before request (human-like behavior)
-      const preDelay = Math.random() * 3000 + 2000; // 2-5s
+      // AGGRESSIVE random delay (longer for 403 bypass)
+      const preDelay = Math.random() * 5000 + 5000; // 5-10s
+      if (attempt > 1) {
+        log(`⏳ Waiting ${Math.floor(preDelay/1000)}s before retry...`, "wait");
+      }
       await new Promise(resolve => setTimeout(resolve, preDelay));
       
       const config = {
@@ -262,13 +266,21 @@ async function makeApiRequest(method, url, data, proxyUrl, customHeaders = {}, m
       
       const response = await axios(config);
       
-      // Handle specific errors
+      // Handle 403 - Most aggressive handling
       if (response.status === 403) {
-        log(`⚠️  403 Forbidden - Rotating proxy/fingerprint...`, "wait");
-        await new Promise(resolve => setTimeout(resolve, 15000));
+        if (attempt === maxRetries) {
+          log(`❌ Persistent 403 after ${maxRetries} attempts - API blocking detected`, "error");
+          throw new Error("403 Forbidden - All retries exhausted");
+        }
+        
+        // Exponentially increasing wait for 403
+        const wait403 = Math.pow(2, attempt) * 15000; // 30s, 60s, 120s
+        log(`⚠️  403 Forbidden - Waiting ${wait403/1000}s and rotating...`, "wait");
+        await new Promise(resolve => setTimeout(resolve, wait403));
         continue;
       }
       
+      // Handle 429 rate limit
       if (response.status === 429) {
         const waitTime = Math.pow(2, attempt) * 10000; // 20s, 40s, 80s
         log(`⚠️  Rate limited (429), waiting ${waitTime/1000}s...`, "wait");
@@ -276,12 +288,19 @@ async function makeApiRequest(method, url, data, proxyUrl, customHeaders = {}, m
         continue;
       }
       
+      // Handle other 4xx errors
       if (response.status >= 400) {
-        throw new Error(`HTTP ${response.status}: ${response.data?.message || 'Unknown error'}`);
+        const errorMsg = response.data?.message || `HTTP ${response.status}`;
+        log(`⚠️  ${errorMsg}`, "wait");
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          continue;
+        }
+        throw new Error(errorMsg);
       }
       
-      // Add random delay after successful request
-      const postDelay = Math.random() * 2000 + 1000; // 1-3s
+      // Success - add post-request delay
+      const postDelay = Math.random() * 3000 + 2000; // 2-5s
       await new Promise(resolve => setTimeout(resolve, postDelay));
       
       return response;
@@ -291,13 +310,14 @@ async function makeApiRequest(method, url, data, proxyUrl, customHeaders = {}, m
       
       const errorMsg = error.response?.status 
         ? `HTTP ${error.response.status}` 
-        : error.code || error.message;
+        : error.code || error.message || "Unknown error";
       
-      log(`⚠️  ${errorMsg}`, "wait");
-      
-      if (attempt < maxRetries) {
-        const waitTime = Math.pow(2, attempt) * 5000; // 10s, 20s, 40s, 80s
-        log(`⏳ Retry in ${waitTime/1000}s...`, "wait");
+      if (attempt === maxRetries) {
+        log(`❌ Final attempt failed: ${errorMsg}`, "error");
+      } else {
+        log(`⚠️  ${errorMsg}`, "wait");
+        const waitTime = Math.pow(2, attempt) * 7000; // 14s, 28s, 56s, 112s
+        log(`⏳ Retry ${attempt + 1}/${maxRetries} in ${waitTime/1000}s...`, "wait");
         await new Promise(resolve => setTimeout(resolve, waitTime));
       }
     }
@@ -306,7 +326,7 @@ async function makeApiRequest(method, url, data, proxyUrl, customHeaders = {}, m
   throw lastError;
 }
 
-async function loginAccount(address, proxyUrl) {
+async function loginAccount(address, proxyUrl, retryWithoutProxy = false) {
   try {
     const loginUrl = `${API_BASE_URL}/user/connect-wallet`;
     const checksummedAddress = getAddress(address);
@@ -316,7 +336,7 @@ async function loginAccount(address, proxyUrl) {
       deviceId = `DEV${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
     }
 
-    log(`🔐 Logging in...`, "info");
+    log(`🔐 Logging in${retryWithoutProxy ? ' WITHOUT proxy' : ''}...`, "info");
 
     const payload = {
       "address": checksummedAddress,
@@ -336,7 +356,8 @@ async function loginAccount(address, proxyUrl) {
       "city": "Unknown"
     };
 
-    const response = await makeApiRequest("post", loginUrl, payload, proxyUrl, {});
+    const actualProxy = retryWithoutProxy ? null : proxyUrl;
+    const response = await makeApiRequest("post", loginUrl, payload, actualProxy, {});
     
     if (response.data.success) {
       const userId = response.data.data.userId;
@@ -374,6 +395,14 @@ async function loginAccount(address, proxyUrl) {
     }
   } catch (error) {
     log(`❌ Login error: ${error.message}`, "error");
+    
+    // If failed with proxy and haven't tried without proxy yet
+    if (proxyUrl && !retryWithoutProxy) {
+      log(`🔄 Retrying WITHOUT proxy...`, "wait");
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      return loginAccount(address, proxyUrl, true);
+    }
+    
     return { success: false };
   }
 }
@@ -428,14 +457,14 @@ async function getBalance(userId, address, proxyUrl) {
   }
 }
 
-async function claimFaucet(address, proxyUrl) {
+async function claimFaucet(address, proxyUrl, retryWithoutProxy = false) {
   const userId = accountTokens[address]?.userId;
   if (!userId) {
     log(`❌ No userId available for faucet claim`, "error");
-    return null;
+    return { success: false, error: "No userId" };
   }
 
-  log(`🎁 Claiming faucet...`, "wait");
+  log(`🎁 Claiming faucet${retryWithoutProxy ? ' WITHOUT proxy' : ''}...`, "wait");
 
   try {
     const faucetUrl = `${API_BASE_URL}/transaction/fund-wallet/${userId}`;
@@ -443,27 +472,43 @@ async function claimFaucet(address, proxyUrl) {
       "Cookie": `access_token=${accountTokens[address].accessToken}`
     };
     
-    const response = await makeApiRequest("get", faucetUrl, null, proxyUrl, headers, 3);
+    const actualProxy = retryWithoutProxy ? null : proxyUrl;
+    const response = await makeApiRequest("get", faucetUrl, null, actualProxy, headers, 3);
+    
+    if (!response || !response.data) {
+      log(`❌ Empty response from API`, "error");
+      return { success: false, error: "Empty response" };
+    }
     
     if (response.data.success) {
       log(`✅ Faucet claimed! Funded: ${response.data.data.fundedAmount} DIAM`, "success");
-      const balance = await getBalance(userId, address, proxyUrl);
+      const balance = await getBalance(userId, address, actualProxy);
       log(`💰 Current balance: ${balance.toFixed(4)} DIAM`, "success");
       return { success: true, balance };
     } else {
-      if (response.data.message.includes("once per day")) {
+      const errorMsg = response.data.message || "Unknown error";
+      if (errorMsg.includes("once per day")) {
         log(`⚠️  Already claimed today`, "wait");
-        const balance = await getBalance(userId, address, proxyUrl);
+        const balance = await getBalance(userId, address, actualProxy);
         log(`💰 Current balance: ${balance.toFixed(4)} DIAM`, "info");
         return { success: false, alreadyClaimed: true, balance };
       }
       
-      log(`❌ Claim failed: ${response.data.message}`, "error");
-      return { success: false };
+      log(`❌ Claim failed: ${errorMsg}`, "error");
+      return { success: false, error: errorMsg };
     }
   } catch (error) {
-    log(`❌ Claim error: ${error.message}`, "error");
-    return { success: false };
+    const errorMsg = error?.message || "Unknown error";
+    log(`❌ Claim error: ${errorMsg}`, "error");
+    
+    // If failed with proxy and haven't tried without proxy yet
+    if (proxyUrl && !retryWithoutProxy && errorMsg.includes("403")) {
+      log(`🔄 Retrying claim WITHOUT proxy...`, "wait");
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      return claimFaucet(address, proxyUrl, true);
+    }
+    
+    return { success: false, error: errorMsg };
   }
 }
 
@@ -595,8 +640,9 @@ async function main() {
   console.log("2. Claim Faucet (Existing Accounts)");
   console.log("3. Send All to Main Wallet");
   console.log("4. Full Auto (Create → Claim → Send)");
+  console.log("5. \x1b[32mClaim WITHOUT Proxy (Try if getting 403)\x1b[0m");
   
-  const mode = await promptUser("\nEnter mode (1-4): ");
+  const mode = await promptUser("\nEnter mode (1-5): ");
 
   if (mode === "2") {
     if (addresses.length === 0) {
@@ -639,6 +685,61 @@ async function main() {
 
       if (i < addresses.length - 1) {
         const waitTime = 90 + Math.floor(Math.random() * 30); // 90-120s random
+        log(`⏳ Waiting ${waitTime} seconds before next account...\n`, "wait");
+        await countdown(waitTime, "⏱️  Countdown:");
+      }
+    }
+
+    console.log("\x1b[36m╔" + "═".repeat(58) + "╗\x1b[0m");
+    console.log("\x1b[36m║\x1b[0m" + " ".repeat(18) + "\x1b[1m\x1b[32mSUMMARY REPORT\x1b[0m" + " ".repeat(23) + "\x1b[36m║\x1b[0m");
+    console.log("\x1b[36m╠" + "═".repeat(58) + "╣\x1b[0m");
+    console.log(`\x1b[36m║\x1b[0m  \x1b[32m✓ Successfully Claimed:\x1b[0m ${successCount.toString().padEnd(25)} \x1b[36m║\x1b[0m`);
+    console.log(`\x1b[36m║\x1b[0m  \x1b[33m⊙ Already Claimed Today:\x1b[0m ${alreadyClaimed.toString().padEnd(24)} \x1b[36m║\x1b[0m`);
+    console.log(`\x1b[36m║\x1b[0m  \x1b[31m✗ Failed:\x1b[0m ${failCount.toString().padEnd(42)} \x1b[36m║\x1b[0m`);
+    console.log(`\x1b[36m║\x1b[0m  \x1b[36m━ Total Processed:\x1b[0m ${addresses.length.toString().padEnd(33)} \x1b[36m║\x1b[0m`);
+    console.log("\x1b[36m╚" + "═".repeat(58) + "╝\x1b[0m");
+  } else if (mode === "5") {
+    // Mode 5: Claim WITHOUT proxy (for bypassing 403)
+    if (addresses.length === 0) {
+      log("❌ No addresses found in users.txt", "error");
+      return;
+    }
+
+    console.log("\n\x1b[32m🚀 RUNNING WITHOUT PROXY - Direct Connection\x1b[0m");
+    console.log("\x1b[36m" + "─".repeat(60) + "\x1b[0m\n");
+
+    let successCount = 0;
+    let alreadyClaimed = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < addresses.length; i++) {
+      const address = addresses[i];
+
+      console.log(`\x1b[1m\x1b[35m┌─ Account ${i + 1}/${addresses.length} ${"─".repeat(40)}\x1b[0m`);
+      log(`📍 Address: ${getShortAddress(address)}`, "info");
+      log(`🔓 Using DIRECT connection (no proxy)`, "info");
+
+      const loginResult = await loginAccount(address, null);
+
+      if (loginResult.success && loginResult.verified) {
+        const claimResult = await claimFaucet(address, null);
+        
+        if (claimResult?.success) {
+          successCount++;
+        } else if (claimResult?.alreadyClaimed) {
+          alreadyClaimed++;
+        } else {
+          failCount++;
+        }
+      } else {
+        log(`⏭️  Skipping claim due to login failure`, "wait");
+        failCount++;
+      }
+
+      console.log(`\x1b[1m\x1b[35m└${"─".repeat(59)}\x1b[0m\n`);
+
+      if (i < addresses.length - 1) {
+        const waitTime = 120 + Math.floor(Math.random() * 60); // 120-180s (longer for no proxy)
         log(`⏳ Waiting ${waitTime} seconds before next account...\n`, "wait");
         await countdown(waitTime, "⏱️  Countdown:");
       }
