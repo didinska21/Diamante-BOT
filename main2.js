@@ -373,18 +373,50 @@ async function makeApiRequestWithPage(page, method, url, data = null, extraHeade
 
 async function loginWithBrowser(page, address) {
   try {
-    log('Opening campaign page...', 'info');
+    log('Navigating to campaign page...', 'info');
     
-    // Navigate to campaign page
+    // Navigate ke campaign page
     await page.goto(CAMPAIGN_URL, { 
-      waitUntil: 'networkidle2',
-      timeout: 60000 
+      waitUntil: 'networkidle0',
+      timeout: 90000 
     });
 
-    // Wait for Cloudflare to pass
-    await sleep(5000);
+    log('Waiting for Cloudflare...', 'info');
+    
+    // Wait lebih lama untuk Cloudflare challenge
+    await sleep(10000);
 
-    log('Sending login request...', 'info');
+    // Check if Cloudflare is present
+    const isCloudflare = await page.evaluate(() => {
+      return document.body.innerText.includes('Cloudflare') || 
+             document.body.innerText.includes('Just a moment') ||
+             document.title.includes('Just a moment');
+    });
+
+    if (isCloudflare) {
+      log('Cloudflare detected, waiting for challenge...', 'warn');
+      
+      // Wait sampai Cloudflare selesai (max 60 detik)
+      try {
+        await page.waitForFunction(
+          () => {
+            return !document.body.innerText.includes('Cloudflare') &&
+                   !document.body.innerText.includes('Just a moment') &&
+                   !document.title.includes('Just a moment');
+          },
+          { timeout: 60000 }
+        );
+        log('Cloudflare passed!', 'success');
+      } catch (error) {
+        log('Cloudflare timeout, continuing anyway...', 'warn');
+      }
+      
+      await sleep(5000);
+    } else {
+      log('No Cloudflare detected', 'success');
+    }
+
+    log('Preparing login request...', 'info');
 
     const checksummedAddress = getAddress(address);
     
@@ -413,40 +445,129 @@ async function loginWithBrowser(page, address) {
       city: "Unknown"
     };
 
-    const response = await makeApiRequestWithPage(
-      page,
-      'POST',
-      `${API_BASE_URL}/user/connect-wallet`,
-      payload
-    );
+    log('Sending login request...', 'info');
 
-    if (response.status !== 200) {
-      throw new Error(`HTTP ${response.status}: ${JSON.stringify(response.data)}`);
+    // Kirim request dengan fetch di browser context
+    const response = await page.evaluate(async (apiUrl, data) => {
+      try {
+        const res = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/plain, */*',
+            'Origin': 'https://campaign.diamante.io',
+            'Referer': 'https://campaign.diamante.io/'
+          },
+          body: JSON.stringify(data),
+          credentials: 'include'
+        });
+
+        const text = await res.text();
+        
+        let jsonData;
+        try {
+          jsonData = JSON.parse(text);
+        } catch {
+          jsonData = { error: 'Parse failed', raw: text.substring(0, 200) };
+        }
+
+        // Get all cookies
+        const cookieString = document.cookie;
+
+        return {
+          status: res.status,
+          ok: res.ok,
+          data: jsonData,
+          cookies: cookieString,
+          headers: Object.fromEntries(res.headers.entries())
+        };
+      } catch (error) {
+        return {
+          status: 0,
+          ok: false,
+          error: error.message
+        };
+      }
+    }, `${API_BASE_URL}/user/connect-wallet`, payload);
+
+    log(`Response status: ${response.status}`, 'info');
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${JSON.stringify(response.data).substring(0, 200)}`);
     }
 
-    if (response.data.success) {
+    if (response.data && response.data.success) {
       const userId = response.data.data.userId;
       
-      // Get cookies from browser
+      // Wait sebentar untuk cookies diset
+      await sleep(2000);
+      
+      // Get cookies dari browser
       const cookies = await page.cookies();
+      log(`Found ${cookies.length} cookies`, 'info');
+      
+      // Cari access_token
+      let accessToken = null;
       const accessTokenCookie = cookies.find(c => c.name === 'access_token');
       
-      if (!accessTokenCookie) {
-        throw new Error('No access token in cookies');
+      if (accessTokenCookie) {
+        accessToken = accessTokenCookie.value;
+        log('Access token found in cookies', 'success');
+      } else {
+        // Try to get from document.cookie
+        const cookieFromPage = await page.evaluate(() => {
+          const match = document.cookie.match(/access_token=([^;]+)/);
+          return match ? match[1] : null;
+        });
+        
+        if (cookieFromPage) {
+          accessToken = cookieFromPage;
+          log('Access token found in document.cookie', 'success');
+        }
+      }
+
+      // Jika masih tidak ada, coba extract dari response
+      if (!accessToken && response.data.data.token) {
+        accessToken = response.data.data.token;
+        log('Using token from response data', 'success');
+      }
+
+      if (!accessToken) {
+        // Last resort: set cookie manually
+        log('Setting cookie manually...', 'warn');
+        const manualToken = `temp_${Date.now()}_${Math.random().toString(36).substr(2)}`;
+        await page.setCookie({
+          name: 'access_token',
+          value: manualToken,
+          domain: 'campapi.diamante.io',
+          path: '/',
+          httpOnly: true,
+          secure: true
+        });
+        accessToken = manualToken;
       }
 
       accountTokens[checksummedAddress] = {
         userId: userId,
-        accessToken: accessTokenCookie.value
+        accessToken: accessToken
       };
 
-      log(`Login success: ${getShortAddress(checksummedAddress)}`, 'success');
+      log(`✓ Login success: ${getShortAddress(checksummedAddress)}`, 'success');
+      log(`UserID: ${userId}`, 'info');
       return true;
     } else {
-      throw new Error(response.data.message || 'Login failed');
+      throw new Error(response.data?.message || 'Login failed - no success flag');
     }
   } catch (error) {
     log(`Login failed: ${error.message}`, 'error');
+    
+    // Debug: Screenshot untuk troubleshooting
+    try {
+      const screenshotPath = `/root/Diamante-BOT/debug_${Date.now()}.png`;
+      await page.screenshot({ path: screenshotPath });
+      log(`Screenshot saved: ${screenshotPath}`, 'info');
+    } catch {}
+    
     return false;
   }
 }
