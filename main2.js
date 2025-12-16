@@ -223,7 +223,7 @@ function saveAccountData() {
 // PUPPETEER FUNCTIONS
 // ============================================================
 
-async function initBrowser(proxyUrl = null) {
+async function initBrowser(proxyUrl = null, proxyAuth = null) {
   try {
     const args = [
       '--no-sandbox',
@@ -234,17 +234,35 @@ async function initBrowser(proxyUrl = null) {
       '--window-size=1920,1080',
       '--disable-blink-features=AutomationControlled',
       '--disable-software-rasterizer',
-      '--single-process', // Important for VPS with limited resources
+      '--single-process',
       '--no-zygote'
     ];
 
+    let username = null;
+    let password = null;
+
     if (proxyUrl) {
-      // Parse proxy URL
+      // Parse proxy URL - support both formats:
+      // http://user:pass@host:port
+      // http://host:port
       const proxyMatch = proxyUrl.match(/^(https?|socks[45]?):\/\/(?:([^:]+):([^@]+)@)?([^:]+):(\d+)/);
       if (proxyMatch) {
-        const [, protocol, username, password, host, port] = proxyMatch;
-        args.push(`--proxy-server=${protocol}://${host}:${port}`);
+        const [, protocol, user, pass, host, port] = proxyMatch;
+        
+        if (user && pass) {
+          username = user;
+          password = pass;
+          args.push(`--proxy-server=${protocol}://${host}:${port}`);
+          log(`Using proxy with auth: ${host}:${port}`, 'info');
+        } else {
+          args.push(`--proxy-server=${protocol}://${host}:${port}`);
+          log(`Using proxy without auth: ${host}:${port}`, 'info');
+        }
+      } else {
+        log(`Invalid proxy format: ${proxyUrl}`, 'warn');
       }
+    } else {
+      log('Running without proxy', 'info');
     }
 
     const launchOptions = {
@@ -259,20 +277,20 @@ async function initBrowser(proxyUrl = null) {
       ignoreHTTPSErrors: true
     };
 
-    // Try to use system Chrome if available (better for VPS)
+    // Try to use system Chrome if available
     const chromePaths = [
-      '/usr/bin/google-chrome-stable',
-      '/usr/bin/google-chrome',
-      '/usr/bin/chromium-browser',
+      '/snap/bin/chromium',
       '/usr/bin/chromium',
-      '/snap/bin/chromium'
+      '/usr/bin/chromium-browser',
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/google-chrome'
     ];
 
     let executablePath = null;
     for (const path of chromePaths) {
       if (fs.existsSync(path)) {
         executablePath = path;
-        log(`Using system Chrome: ${path}`, 'info');
+        log(`Using: ${path}`, 'info');
         break;
       }
     }
@@ -283,8 +301,20 @@ async function initBrowser(proxyUrl = null) {
 
     browser = await puppeteer.launch(launchOptions);
 
+    // Authenticate proxy if credentials exist
+    if (username && password && proxyUrl) {
+      const pages = await browser.pages();
+      if (pages.length > 0) {
+        await pages[0].authenticate({
+          username: username,
+          password: password
+        });
+        log('Proxy authenticated', 'success');
+      }
+    }
+
     log('Browser initialized', 'success');
-    return browser;
+    return { browser, proxyAuth: { username, password } };
   } catch (error) {
     log(`Failed to init browser: ${error.message}`, 'error');
     throw error;
@@ -559,7 +589,7 @@ async function askConfiguration() {
 // MAIN PROCESS
 // ============================================================
 
-async function processAccount(address, recipients, proxyUrl, index, total) {
+async function processAccount(address, recipients, proxyUrl, proxyAuth, index, total) {
   let page = null;
   
   try {
@@ -569,6 +599,14 @@ async function processAccount(address, recipients, proxyUrl, index, total) {
 
     // Create new page
     page = await browser.newPage();
+    
+    // Authenticate proxy for this page if needed
+    if (proxyAuth && proxyAuth.username && proxyAuth.password) {
+      await page.authenticate({
+        username: proxyAuth.username,
+        password: proxyAuth.password
+      });
+    }
     
     // Set viewport
     await page.setViewport({ width: 1920, height: 1080 });
@@ -660,10 +698,12 @@ async function main() {
 
   try {
     const proxyUrl = proxies.length > 0 ? proxies[0] : null;
-    await initBrowser(proxyUrl);
+    const browserData = await initBrowser(proxyUrl);
+    browser = browserData.browser;
+    const proxyAuth = browserData.proxyAuth;
 
     for (let i = 0; i < addresses.length; i++) {
-      await processAccount(addresses[i], recipients, proxyUrl, i, addresses.length);
+      await processAccount(addresses[i], recipients, proxyUrl, proxyAuth, i, addresses.length);
 
       if (i < addresses.length - 1) {
         await countdown(CONFIG.delayBetweenAccounts / 1000, 'Next account');
