@@ -4,6 +4,7 @@ import { SocksProxyAgent } from "socks-proxy-agent";
 import { Wallet, getAddress } from "ethers";
 import fs from "fs";
 import readline from "readline";
+import crypto from "crypto";
 
 const API_BASE_URL = "https://campapi.diamante.io/api/v1";
 const ACCOUNT_DATA_FILE = "account_data.json";
@@ -12,23 +13,54 @@ const USERS_FILE = "users.txt";
 const X_ACCOUNTS_FILE = "x_accounts.txt";
 const MAIN_WALLET_FILE = "main_wallet.txt";
 
-// Updated headers with more realistic values
-const CONFIG_DEFAULT_HEADERS = {
-  "Accept": "application/json, text/plain, */*",
-  "Accept-Encoding": "gzip, deflate, br",
-  "Accept-Language": "en-US,en;q=0.9",
-  "Cache-Control": "no-cache",
-  "Origin": "https://campaign.diamante.io",
-  "Pragma": "no-cache",
-  "Referer": "https://campaign.diamante.io/",
-  "Sec-Ch-Ua": '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
-  "Sec-Ch-Ua-Mobile": "?0",
-  "Sec-Ch-Ua-Platform": '"Windows"',
-  "Sec-Fetch-Dest": "empty",
-  "Sec-Fetch-Mode": "cors",
-  "Sec-Fetch-Site": "same-site",
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
-};
+// Generate realistic fingerprint
+function generateFingerprint() {
+  const canvas = crypto.randomBytes(16).toString('hex');
+  const webgl = crypto.randomBytes(16).toString('hex');
+  return {
+    canvas,
+    webgl,
+    timezone: 'Asia/Jakarta',
+    screen: '1920x1080',
+    language: 'en-US'
+  };
+}
+
+// Rotate User-Agent
+function getRandomUserAgent() {
+  const userAgents = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+  ];
+  return userAgents[Math.floor(Math.random() * userAgents.length)];
+}
+
+// Enhanced headers with fingerprint
+function getRequestHeaders(fingerprint, customHeaders = {}) {
+  const userAgent = getRandomUserAgent();
+  return {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
+    "Cache-Control": "no-cache",
+    "Origin": "https://campaign.diamante.io",
+    "Pragma": "no-cache",
+    "Referer": "https://campaign.diamante.io/",
+    "Sec-Ch-Ua": '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-site",
+    "User-Agent": userAgent,
+    "X-Fingerprint": fingerprint.canvas,
+    "X-Timezone": fingerprint.timezone,
+    ...customHeaders
+  };
+}
 
 let addresses = [];
 let proxies = [];
@@ -183,14 +215,36 @@ function createAgent(proxyUrl) {
   }
 }
 
-// FIXED: Added better retry logic with exponential backoff
-async function makeApiRequest(method, url, data, proxyUrl, customHeaders = {}, maxRetries = 3) {
+// Test proxy before use
+async function testProxy(proxyUrl) {
+  try {
+    const agent = createAgent(proxyUrl);
+    const response = await axios.get("https://api.ipify.org?format=json", {
+      httpsAgent: agent,
+      httpAgent: agent,
+      timeout: 5000
+    });
+    log(`✅ Proxy OK: ${response.data.ip}`, "success");
+    return true;
+  } catch (error) {
+    log(`❌ Proxy FAILED: ${proxyUrl.substring(0, 30)}...`, "error");
+    return false;
+  }
+}
+
+// Enhanced request with anti-bot bypass
+async function makeApiRequest(method, url, data, proxyUrl, customHeaders = {}, maxRetries = 5) {
   let lastError = null;
+  const fingerprint = generateFingerprint();
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const agent = proxyUrl ? createAgent(proxyUrl) : null;
-      const headers = { ...CONFIG_DEFAULT_HEADERS, ...customHeaders };
+      const headers = getRequestHeaders(fingerprint, customHeaders);
+      
+      // Random delay before request (human-like behavior)
+      const preDelay = Math.random() * 3000 + 2000; // 2-5s
+      await new Promise(resolve => setTimeout(resolve, preDelay));
       
       const config = {
         method,
@@ -198,38 +252,52 @@ async function makeApiRequest(method, url, data, proxyUrl, customHeaders = {}, m
         data,
         headers,
         ...(agent ? { httpsAgent: agent, httpAgent: agent } : {}),
-        timeout: 20000, // Increased timeout
+        timeout: 30000,
         withCredentials: true,
-        validateStatus: (status) => status < 500 // Don't throw on 4xx errors
+        validateStatus: (status) => status < 500,
+        maxRedirects: 5
       };
+      
+      log(`🔄 Attempt ${attempt}/${maxRetries}: ${method.toUpperCase()} ${url.split('/').pop()}`, "info");
       
       const response = await axios(config);
       
-      // Handle specific error codes
+      // Handle specific errors
       if (response.status === 403) {
-        throw new Error("Access forbidden (403) - possible anti-bot detection");
+        log(`⚠️  403 Forbidden - Rotating proxy/fingerprint...`, "wait");
+        await new Promise(resolve => setTimeout(resolve, 15000));
+        continue;
       }
       
       if (response.status === 429) {
-        const waitTime = Math.pow(2, attempt) * 5000; // Exponential backoff
+        const waitTime = Math.pow(2, attempt) * 10000; // 20s, 40s, 80s
         log(`⚠️  Rate limited (429), waiting ${waitTime/1000}s...`, "wait");
         await new Promise(resolve => setTimeout(resolve, waitTime));
         continue;
       }
       
+      if (response.status >= 400) {
+        throw new Error(`HTTP ${response.status}: ${response.data?.message || 'Unknown error'}`);
+      }
+      
+      // Add random delay after successful request
+      const postDelay = Math.random() * 2000 + 1000; // 1-3s
+      await new Promise(resolve => setTimeout(resolve, postDelay));
+      
       return response;
+      
     } catch (error) {
       lastError = error;
       
-      if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
-        log(`⚠️  Connection error: ${error.code}`, "wait");
-      } else if (error.response?.status === 403) {
-        log(`⚠️  403 Forbidden - Try different proxy or wait`, "wait");
-      }
+      const errorMsg = error.response?.status 
+        ? `HTTP ${error.response.status}` 
+        : error.code || error.message;
+      
+      log(`⚠️  ${errorMsg}`, "wait");
       
       if (attempt < maxRetries) {
-        const waitTime = Math.pow(2, attempt) * 3000; // 6s, 12s, 24s
-        log(`⏳ Retry ${attempt}/${maxRetries} in ${waitTime/1000}s...`, "wait");
+        const waitTime = Math.pow(2, attempt) * 5000; // 10s, 20s, 40s, 80s
+        log(`⏳ Retry in ${waitTime/1000}s...`, "wait");
         await new Promise(resolve => setTimeout(resolve, waitTime));
       }
     }
@@ -245,11 +313,10 @@ async function loginAccount(address, proxyUrl) {
 
     let deviceId = accountData[checksummedAddress.toLowerCase()];
     if (!deviceId) {
-      deviceId = `DEV${Math.random().toString(24).substr(2, 5).toUpperCase()}`;
+      deviceId = `DEV${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
     }
 
-    // Add random delay to avoid pattern detection
-    await new Promise(resolve => setTimeout(resolve, Math.random() * 2000 + 1000));
+    log(`🔐 Logging in...`, "info");
 
     const payload = {
       "address": checksummedAddress,
@@ -316,9 +383,6 @@ async function registerAccount(userId, address, socialHandle, referralCode, acce
     const registerUrl = `${API_BASE_URL}/auth/register`;
     const checksummedAddress = getAddress(address);
     
-    // Add delay before registration
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
     const payload = {
       "userId": userId,
       "walletAddress": checksummedAddress,
@@ -352,7 +416,7 @@ async function getBalance(userId, address, proxyUrl) {
     const headers = {
       "Cookie": `access_token=${accountTokens[address].accessToken}`
     };
-    const response = await makeApiRequest("get", balanceUrl, null, proxyUrl, headers);
+    const response = await makeApiRequest("get", balanceUrl, null, proxyUrl, headers, 3);
     if (response.data.success) {
       return response.data.data.balance;
     } else {
@@ -373,53 +437,34 @@ async function claimFaucet(address, proxyUrl) {
 
   log(`🎁 Claiming faucet...`, "wait");
 
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    try {
-      const faucetUrl = `${API_BASE_URL}/transaction/fund-wallet/${userId}`;
-      const headers = {
-        "Cookie": `access_token=${accountTokens[address].accessToken}`
-      };
-      
-      const response = await makeApiRequest("get", faucetUrl, null, proxyUrl, headers);
-      
-      if (response.data.success) {
-        log(`✅ Faucet claimed! Funded: ${response.data.data.fundedAmount} DIAM`, "success");
-        const balance = await getBalance(userId, address, proxyUrl);
-        log(`💰 Current balance: ${balance.toFixed(4)} DIAM`, "success");
-        return { success: true, balance };
-      } else {
-        if (response.data.message.includes("once per day")) {
-          log(`⚠️  Already claimed today`, "wait");
-          const balance = await getBalance(userId, address, proxyUrl);
-          log(`💰 Current balance: ${balance.toFixed(4)} DIAM`, "info");
-          return { success: false, alreadyClaimed: true, balance };
-        }
-        
-        if (response.data.message.includes("network guardians") || 
-            response.data.message.includes("Something went wrong")) {
-          log(`⚠️  Server busy (${response.data.message})`, "wait");
-          if (attempt < 5) {
-            const waitTime = 15000 + (attempt * 10000);
-            log(`⏳ Waiting ${waitTime/1000}s before retry...`, "wait");
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-            continue;
-          }
-        }
-        
-        log(`❌ Attempt ${attempt}/5 failed: ${response.data.message}`, "error");
-      }
-    } catch (error) {
-      log(`❌ Attempt ${attempt}/5 error: ${error.message}`, "error");
-    }
+  try {
+    const faucetUrl = `${API_BASE_URL}/transaction/fund-wallet/${userId}`;
+    const headers = {
+      "Cookie": `access_token=${accountTokens[address].accessToken}`
+    };
     
-    if (attempt < 5) {
-      log(`⏳ Retrying in 10 seconds...`, "wait");
-      await new Promise(resolve => setTimeout(resolve, 10000));
+    const response = await makeApiRequest("get", faucetUrl, null, proxyUrl, headers, 3);
+    
+    if (response.data.success) {
+      log(`✅ Faucet claimed! Funded: ${response.data.data.fundedAmount} DIAM`, "success");
+      const balance = await getBalance(userId, address, proxyUrl);
+      log(`💰 Current balance: ${balance.toFixed(4)} DIAM`, "success");
+      return { success: true, balance };
+    } else {
+      if (response.data.message.includes("once per day")) {
+        log(`⚠️  Already claimed today`, "wait");
+        const balance = await getBalance(userId, address, proxyUrl);
+        log(`💰 Current balance: ${balance.toFixed(4)} DIAM`, "info");
+        return { success: false, alreadyClaimed: true, balance };
+      }
+      
+      log(`❌ Claim failed: ${response.data.message}`, "error");
+      return { success: false };
     }
+  } catch (error) {
+    log(`❌ Claim error: ${error.message}`, "error");
+    return { success: false };
   }
-  
-  log(`❌ Failed to claim faucet after 5 attempts`, "error");
-  return { success: false };
 }
 
 async function sendDiam(fromAddress, toAddress, amount, proxyUrl) {
@@ -440,7 +485,7 @@ async function sendDiam(fromAddress, toAddress, amount, proxyUrl) {
       "Cookie": `access_token=${accountTokens[fromAddress].accessToken}`,
       "Content-Type": "application/json"
     };
-    const response = await makeApiRequest("post", sendUrl, payload, proxyUrl, headers);
+    const response = await makeApiRequest("post", sendUrl, payload, proxyUrl, headers, 3);
     if (response.data.success) {
       log(`✅ Sent ${amount} DIAM to ${getShortAddress(toAddress)}`, "success");
       return true;
@@ -528,7 +573,7 @@ async function promptUser(question) {
 async function main() {
   console.clear();
   console.log("\x1b[36m╔" + "═".repeat(58) + "╗\x1b[0m");
-  console.log("\x1b[36m║\x1b[0m" + " ".repeat(8) + "\x1b[1m\x1b[33mDIAM AUTO REGISTER & CLAIM FAUCET\x1b[0m" + " ".repeat(12) + "\x1b[36m║\x1b[0m");
+  console.log("\x1b[36m║\x1b[0m" + " ".repeat(8) + "\x1b[1m\x1b[33mDIAM AUTO - ANTI-BOT BYPASS\x1b[0m" + " ".repeat(16) + "\x1b[36m║\x1b[0m");
   console.log("\x1b[36m╚" + "═".repeat(58) + "╝\x1b[0m");
   console.log();
 
@@ -538,6 +583,12 @@ async function main() {
   loadProxies();
   loadXAccounts();
   loadMainWallet();
+
+  // Test first proxy
+  if (proxies.length > 0) {
+    log("🧪 Testing first proxy...", "info");
+    await testProxy(proxies[0]);
+  }
 
   console.log("\n\x1b[1m\x1b[33mSelect Mode:\x1b[0m");
   console.log("1. Create New Accounts");
@@ -567,7 +618,6 @@ async function main() {
       log(`📍 Address: ${getShortAddress(address)}`, "info");
       if (proxyUrl) log(`🔌 Proxy: ${proxyUrl.substring(0, 35)}...`, "info");
 
-      log(`🔐 Logging in...`);
       const loginResult = await loginAccount(address, proxyUrl);
 
       if (loginResult.success && loginResult.verified) {
@@ -588,8 +638,9 @@ async function main() {
       console.log(`\x1b[1m\x1b[35m└${"─".repeat(59)}\x1b[0m\n`);
 
       if (i < addresses.length - 1) {
-        log(`⏳ Waiting 60 seconds before next account...\n`, "wait");
-        await countdown(60, "⏱️  Countdown:");
+        const waitTime = 90 + Math.floor(Math.random() * 30); // 90-120s random
+        log(`⏳ Waiting ${waitTime} seconds before next account...\n`, "wait");
+        await countdown(waitTime, "⏱️  Countdown:");
       }
     }
 
