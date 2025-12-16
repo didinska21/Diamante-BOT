@@ -1,38 +1,22 @@
 // ============================================================
-// SIMPLE DIAM BOT - Enhanced Cloudflare Bypass Version
+// DIAM BOT - Puppeteer Version (Real Browser Cloudflare Bypass)
 // ============================================================
 
 import fs from 'fs';
-import axios from 'axios';
 import { getAddress, Wallet } from 'ethers';
-import { HttpsProxyAgent } from 'https-proxy-agent';
-import { SocksProxyAgent } from 'socks-proxy-agent';
+import puppeteer from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import readline from 'readline';
 
+// Use stealth plugin to avoid detection
+puppeteer.use(StealthPlugin());
+
 // ============================================================
-// ENHANCED CONFIGURATION - CLOUDFLARE BYPASS
+// CONFIGURATION
 // ============================================================
 
 const API_BASE_URL = "https://campapi.diamante.io/api/v1";
-
-// Enhanced headers untuk bypass Cloudflare
-const CONFIG_DEFAULT_HEADERS = {
-  "Accept": "application/json, text/plain, */*",
-  "Accept-Encoding": "gzip, deflate, br",
-  "Accept-Language": "en-US,en;q=0.9",
-  "Cache-Control": "no-cache",
-  "Connection": "keep-alive",
-  "Origin": "https://campaign.diamante.io",
-  "Pragma": "no-cache",
-  "Referer": "https://campaign.diamante.io/",
-  "Sec-Ch-Ua": '"Google Chrome";v="134", "Chromium";v="134", "Not-A.Brand";v="99"',
-  "Sec-Ch-Ua-Mobile": "?0",
-  "Sec-Ch-Ua-Platform": '"Windows"',
-  "Sec-Fetch-Dest": "empty",
-  "Sec-Fetch-Mode": "cors",
-  "Sec-Fetch-Site": "same-site",
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
-};
+const CAMPAIGN_URL = "https://campaign.diamante.io";
 
 const CONFIG = {
   sendAmountMin: 0.001,
@@ -40,13 +24,10 @@ const CONFIG = {
   sendCount: 1,
   sendMode: 'random-generated',
   targetAddress: null,
-  delayBetweenSends: 60000,
-  delayBetweenAccounts: 60000,
-  // ANTI-CLOUDFLARE SETTINGS
-  retryAttempts: 3,
-  retryDelay: 5000,
-  requestTimeout: 30000,
-  randomizeUserAgent: true
+  delayBetweenSends: 90000,
+  delayBetweenAccounts: 90000,
+  headless: true, // Set false untuk debug
+  slowMo: 100 // Slow motion untuk simulate human
 };
 
 // ============================================================
@@ -55,15 +36,7 @@ const CONFIG = {
 
 let accountTokens = {};
 let accountData = {};
-
-// User Agent pool untuk rotasi
-const USER_AGENTS = [
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0"
-];
+let browser = null;
 
 // ============================================================
 // READLINE INTERFACE
@@ -118,9 +91,10 @@ function printBanner() {
 ║     ██████╔╝██║██║  ██║██║ ╚═╝ ██║                       ║
 ║     ╚═════╝ ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝                       ║
 ║                                                           ║
-║                      by : didinska                        ║
+║                    by : didinska                          ║
 ║                                                           ║
-║         🚀 CLOUDFLARE BYPASS ENHANCED V2.1 🚀             ║
+║          🌐 PUPPETEER CLOUDFLARE BYPASS V3.0 🌐           ║
+║                   Real Browser Edition                    ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
 `;
@@ -154,7 +128,7 @@ async function countdown(seconds, message = "Waiting") {
     const progressBar = '█'.repeat(filledBars) + '░'.repeat(emptyBars);
     
     process.stdout.write(
-      `\r\x1b[36m${frames[frameIndex]} ${message}: [${progressBar}] ${timeStr} remaining...\x1b[0m`
+      `\r\x1b[36m${frames[frameIndex]} ${message}: [${progressBar}] ${timeStr}\x1b[0m`
     );
     
     frameIndex = (frameIndex + 1) % frames.length;
@@ -164,42 +138,6 @@ async function countdown(seconds, message = "Waiting") {
   process.stdout.write('\r' + ' '.repeat(80) + '\r');
 }
 
-async function showLoading(message = "Processing", duration = 2000) {
-  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-  const dots = ['   ', '.  ', '.. ', '...'];
-  let frameIndex = 0;
-  let dotIndex = 0;
-  
-  const interval = 100;
-  const iterations = Math.floor(duration / interval);
-  
-  for (let i = 0; i < iterations; i++) {
-    process.stdout.write(
-      `\r\x1b[35m${frames[frameIndex]} ${message}${dots[dotIndex]}\x1b[0m`
-    );
-    frameIndex = (frameIndex + 1) % frames.length;
-    dotIndex = Math.floor(i / 3) % dots.length;
-    await sleep(interval);
-  }
-  
-  process.stdout.write('\r' + ' '.repeat(80) + '\r');
-}
-
-function createAgent(proxyUrl) {
-  if (!proxyUrl) return null;
-  
-  try {
-    if (proxyUrl.startsWith("socks")) {
-      return new SocksProxyAgent(proxyUrl);
-    } else {
-      return new HttpsProxyAgent(proxyUrl);
-    }
-  } catch (error) {
-    log(`Failed to create proxy agent: ${error.message}`, 'error');
-    return null;
-  }
-}
-
 function randomAmount(min, max) {
   return parseFloat((Math.random() * (max - min) + min).toFixed(4));
 }
@@ -207,10 +145,6 @@ function randomAmount(min, max) {
 function generateRandomAddress() {
   const wallet = Wallet.createRandom();
   return wallet.address;
-}
-
-function getRandomUserAgent() {
-  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
 // ============================================================
@@ -225,7 +159,7 @@ function loadAddresses() {
       .filter(addr => addr.match(/^0x[0-9a-fA-F]{40}$/))
       .map(addr => getAddress(addr));
     
-    log(`Loaded ${addresses.length} addresses from user.txt`, 'success');
+    log(`Loaded ${addresses.length} addresses`, 'success');
     return addresses;
   } catch (error) {
     log(`Failed to load addresses: ${error.message}`, 'error');
@@ -241,10 +175,10 @@ function loadRecipients() {
       .filter(addr => addr.match(/^0x[0-9a-fA-F]{40}$/))
       .map(addr => getAddress(addr));
     
-    log(`Loaded ${recipients.length} recipient addresses from wallet.txt`, 'success');
+    log(`Loaded ${recipients.length} recipients`, 'success');
     return recipients;
   } catch (error) {
-    log(`Failed to load recipients: ${error.message}`, 'error');
+    log(`No recipients loaded`, 'warn');
     return [];
   }
 }
@@ -256,10 +190,10 @@ function loadProxies() {
       .map(proxy => proxy.trim())
       .filter(proxy => proxy);
     
-    log(`Loaded ${proxies.length} proxies from proxy.txt`, 'success');
+    log(`Loaded ${proxies.length} proxies`, 'success');
     return proxies;
   } catch (error) {
-    log(`No proxies loaded, running without proxy`, 'warn');
+    log(`No proxies loaded`, 'warn');
     return [];
   }
 }
@@ -269,10 +203,10 @@ function loadAccountData() {
     if (fs.existsSync("account_data.json")) {
       const data = fs.readFileSync("account_data.json", "utf8");
       accountData = JSON.parse(data);
-      log('Loaded existing account data', 'success');
+      log('Loaded account data', 'success');
     }
   } catch (error) {
-    log('No account data found, starting fresh', 'warn');
+    log('Starting fresh', 'warn');
     accountData = {};
   }
 }
@@ -281,96 +215,118 @@ function saveAccountData() {
   try {
     fs.writeFileSync("account_data.json", JSON.stringify(accountData, null, 2));
   } catch (error) {
-    log(`Failed to save account data: ${error.message}`, 'error');
+    log(`Failed to save: ${error.message}`, 'error');
   }
 }
 
 // ============================================================
-// ENHANCED API FUNCTIONS - CLOUDFLARE BYPASS
+// PUPPETEER FUNCTIONS
 // ============================================================
 
-async function makeApiRequest(method, url, data = null, proxyUrl = null, customHeaders = {}, retryCount = 0) {
+async function initBrowser(proxyUrl = null) {
   try {
-    const agent = proxyUrl ? createAgent(proxyUrl) : null;
-    
-    // Randomize User-Agent jika enabled
-    let headers = { ...CONFIG_DEFAULT_HEADERS, ...customHeaders };
-    if (CONFIG.randomizeUserAgent) {
-      headers["User-Agent"] = getRandomUserAgent();
-    }
-    
-    // Add random delays untuk simulate human behavior
-    const randomDelay = Math.floor(Math.random() * 2000) + 1000;
-    await sleep(randomDelay);
-    
-    const config = {
-      method,
-      url,
-      data,
-      headers,
-      ...(agent ? { httpsAgent: agent, httpAgent: agent } : {}),
-      timeout: CONFIG.requestTimeout,
-      withCredentials: true,
-      maxRedirects: 5,
-      validateStatus: function (status) {
-        return status >= 200 && status < 500; // Accept 4xx untuk handle manual
-      }
-    };
+    const args = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--disable-gpu',
+      '--window-size=1920,1080',
+      '--disable-blink-features=AutomationControlled'
+    ];
 
-    const response = await axios(config);
-    
-    // Check untuk Cloudflare block
-    if (response.status === 403 || response.status === 429) {
-      const responseText = typeof response.data === 'string' ? response.data : '';
-      
-      if (responseText.includes('Cloudflare') || responseText.includes('cloudflare')) {
-        throw new Error('CLOUDFLARE_BLOCK');
+    if (proxyUrl) {
+      // Parse proxy URL
+      const proxyMatch = proxyUrl.match(/^(https?|socks[45]?):\/\/(?:([^:]+):([^@]+)@)?([^:]+):(\d+)/);
+      if (proxyMatch) {
+        const [, protocol, username, password, host, port] = proxyMatch;
+        args.push(`--proxy-server=${protocol}://${host}:${port}`);
       }
-      
-      if (response.status === 429) {
-        throw new Error('RATE_LIMITED');
+    }
+
+    browser = await puppeteer.launch({
+      headless: CONFIG.headless ? 'new' : false,
+      args: args,
+      slowMo: CONFIG.slowMo,
+      defaultViewport: {
+        width: 1920,
+        height: 1080
       }
-      
-      throw new Error(`HTTP ${response.status}`);
-    }
-    
-    if (response.status >= 400) {
-      throw new Error(`HTTP ${response.status}: ${JSON.stringify(response.data)}`);
-    }
-    
-    return response;
-    
+    });
+
+    log('Browser initialized', 'success');
+    return browser;
   } catch (error) {
-    // Retry logic dengan exponential backoff
-    if (retryCount < CONFIG.retryAttempts) {
-      const isCloudflareBlock = error.message === 'CLOUDFLARE_BLOCK';
-      const isRateLimited = error.message === 'RATE_LIMITED';
-      
-      if (isCloudflareBlock || isRateLimited) {
-        const backoffTime = CONFIG.retryDelay * Math.pow(2, retryCount);
-        const waitTime = isCloudflareBlock ? backoffTime * 2 : backoffTime;
-        
-        log(`${isCloudflareBlock ? '🛡️ Cloudflare block' : '⏱️ Rate limited'} detected. Retry ${retryCount + 1}/${CONFIG.retryAttempts} in ${waitTime/1000}s...`, 'warn');
-        await countdown(Math.floor(waitTime/1000), 'Retrying in');
-        
-        return makeApiRequest(method, url, data, proxyUrl, customHeaders, retryCount + 1);
-      }
-    }
-    
-    if (error.response) {
-      throw new Error(`HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`);
-    } else if (error.request) {
-      throw new Error('No response from server (possible network/proxy issue)');
-    } else {
-      throw new Error(error.message);
-    }
+    log(`Failed to init browser: ${error.message}`, 'error');
+    throw error;
   }
 }
 
-async function loginAccount(address, proxyUrl = null) {
+async function makeApiRequestWithPage(page, method, url, data = null, extraHeaders = {}) {
   try {
-    await showLoading('Authenticating', 2000);
+    // Set extra headers
+    await page.setExtraHTTPHeaders({
+      'Accept': 'application/json, text/plain, */*',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Origin': 'https://campaign.diamante.io',
+      'Referer': 'https://campaign.diamante.io/',
+      ...extraHeaders
+    });
+
+    // Evaluate API call in browser context
+    const response = await page.evaluate(async (method, url, data) => {
+      const options = {
+        method: method,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, text/plain, */*'
+        },
+        credentials: 'include'
+      };
+
+      if (data) {
+        options.body = JSON.stringify(data);
+      }
+
+      const res = await fetch(url, options);
+      const text = await res.text();
+      
+      let jsonData;
+      try {
+        jsonData = JSON.parse(text);
+      } catch {
+        jsonData = { error: 'Failed to parse JSON', raw: text };
+      }
+
+      return {
+        status: res.status,
+        statusText: res.statusText,
+        headers: Object.fromEntries(res.headers.entries()),
+        data: jsonData
+      };
+    }, method, url, data);
+
+    return response;
+  } catch (error) {
+    throw new Error(`API request failed: ${error.message}`);
+  }
+}
+
+async function loginWithBrowser(page, address) {
+  try {
+    log('Opening campaign page...', 'info');
     
+    // Navigate to campaign page
+    await page.goto(CAMPAIGN_URL, { 
+      waitUntil: 'networkidle2',
+      timeout: 60000 
+    });
+
+    // Wait for Cloudflare to pass
+    await sleep(5000);
+
+    log('Sending login request...', 'info');
+
     const checksummedAddress = getAddress(address);
     
     let deviceId = accountData[checksummedAddress.toLowerCase()];
@@ -398,51 +354,53 @@ async function loginAccount(address, proxyUrl = null) {
       city: "Unknown"
     };
 
-    const response = await makeApiRequest("post", `${API_BASE_URL}/user/connect-wallet`, payload, proxyUrl);
+    const response = await makeApiRequestWithPage(
+      page,
+      'POST',
+      `${API_BASE_URL}/user/connect-wallet`,
+      payload
+    );
+
+    if (response.status !== 200) {
+      throw new Error(`HTTP ${response.status}: ${JSON.stringify(response.data)}`);
+    }
 
     if (response.data.success) {
       const userId = response.data.data.userId;
-      const setCookie = response.headers['set-cookie'];
-      let accessToken = null;
-
-      if (setCookie) {
-        const cookieStr = setCookie[0] || "";
-        const match = cookieStr.match(/access_token=([^;]+)/);
-        if (match) accessToken = match[1];
-      }
-
-      if (!accessToken) {
-        throw new Error('Failed to extract access token');
-      }
-
-      accountTokens[checksummedAddress] = { userId, accessToken };
       
+      // Get cookies from browser
+      const cookies = await page.cookies();
+      const accessTokenCookie = cookies.find(c => c.name === 'access_token');
+      
+      if (!accessTokenCookie) {
+        throw new Error('No access token in cookies');
+      }
+
+      accountTokens[checksummedAddress] = {
+        userId: userId,
+        accessToken: accessTokenCookie.value
+      };
+
       log(`Login success: ${getShortAddress(checksummedAddress)}`, 'success');
       return true;
     } else {
-      throw new Error(response.data.message);
+      throw new Error(response.data.message || 'Login failed');
     }
   } catch (error) {
-    log(`Login failed for ${getShortAddress(address)}: ${error.message}`, 'error');
+    log(`Login failed: ${error.message}`, 'error');
     return false;
   }
 }
 
-async function getBalance(address, proxyUrl = null) {
+async function getBalanceWithPage(page, address) {
   try {
     const userId = accountTokens[address]?.userId;
-    if (!userId) throw new Error('No userId found');
+    if (!userId) throw new Error('No userId');
 
-    const headers = {
-      Cookie: `access_token=${accountTokens[address].accessToken}`
-    };
-
-    const response = await makeApiRequest(
-      "get",
-      `${API_BASE_URL}/transaction/get-balance/${userId}`,
-      null,
-      proxyUrl,
-      headers
+    const response = await makeApiRequestWithPage(
+      page,
+      'GET',
+      `${API_BASE_URL}/transaction/get-balance/${userId}`
     );
 
     if (response.data.success) {
@@ -451,17 +409,15 @@ async function getBalance(address, proxyUrl = null) {
       throw new Error(response.data.message);
     }
   } catch (error) {
-    log(`Failed to get balance: ${error.message}`, 'error');
+    log(`Get balance failed: ${error.message}`, 'error');
     return 0;
   }
 }
 
-async function sendDiam(fromAddress, toAddress, amount, proxyUrl = null) {
+async function sendDiamWithPage(page, fromAddress, toAddress, amount) {
   try {
-    await showLoading('Preparing transaction', 1500);
-    
     const userId = accountTokens[fromAddress]?.userId;
-    if (!userId) throw new Error('No userId found');
+    if (!userId) throw new Error('No userId');
 
     const payload = {
       toAddress: getAddress(toAddress),
@@ -469,22 +425,22 @@ async function sendDiam(fromAddress, toAddress, amount, proxyUrl = null) {
       userId: userId
     };
 
-    const headers = {
-      Cookie: `access_token=${accountTokens[fromAddress].accessToken}`,
-      "Content-Type": "application/json"
-    };
+    log(`Sending ${amount} DIAM to ${getShortAddress(toAddress)}...`, 'info');
 
-    const response = await makeApiRequest(
-      "post",
+    const response = await makeApiRequestWithPage(
+      page,
+      'POST',
       `${API_BASE_URL}/transaction/transfer`,
-      payload,
-      proxyUrl,
-      headers
+      payload
     );
+
+    if (response.status !== 200) {
+      throw new Error(`HTTP ${response.status}`);
+    }
 
     if (response.data.success) {
       const hash = response.data.data.transferData.hash;
-      log(`Sent ${amount} DIAM → ${getShortAddress(toAddress)} | Hash: ${getShortHash(hash)}`, 'success');
+      log(`✓ Sent ${amount} DIAM | Hash: ${getShortHash(hash)}`, 'success');
       return true;
     } else {
       throw new Error(response.data.message);
@@ -501,109 +457,69 @@ async function sendDiam(fromAddress, toAddress, amount, proxyUrl = null) {
 
 async function askConfiguration() {
   console.log('\n' + '┌' + '─'.repeat(58) + '┐');
-  console.log('│' + ' '.repeat(18) + '\x1b[1m\x1b[36mKONFIGURASI BOT\x1b[0m' + ' '.repeat(18) + '│');
+  console.log('│' + ' '.repeat(18) + '\x1b[1m\x1b[36mKONFIGURASI\x1b[0m' + ' '.repeat(18) + '│');
   console.log('└' + '─'.repeat(58) + '┘\n');
 
-  // Mode kirim
-  console.log('\x1b[1m📤 Mode Pengiriman:\x1b[0m');
-  console.log('  \x1b[32m1.\x1b[0m Random Address (Generate otomatis)');
-  console.log('  \x1b[32m2.\x1b[0m Dari wallet.txt');
-  console.log('  \x1b[32m3.\x1b[0m Manual - Kirim ke 1 address\n');
+  console.log('\x1b[1m📤 Mode:\x1b[0m');
+  console.log('  1. Random Address (auto-generate)');
+  console.log('  2. Dari wallet.txt');
+  console.log('  3. Manual address\n');
   
-  let modeInput = await question('Pilih mode (1/2/3) [default: 1]: ');
-  modeInput = modeInput.trim() || '1';
+  let mode = await question('Pilih (1/2/3) [1]: ');
+  mode = mode.trim() || '1';
   
-  if (modeInput === '3') {
+  if (mode === '3') {
     CONFIG.sendMode = 'manual';
-    let targetAddr = await question('\n🎯 Target address (0x...): ');
-    targetAddr = targetAddr.trim();
-    
+    let addr = await question('\n🎯 Target address: ');
     try {
-      CONFIG.targetAddress = getAddress(targetAddr);
-      log(`Target: ${getShortAddress(CONFIG.targetAddress)}`, 'success');
-    } catch (error) {
-      log('Invalid address! Using random mode.', 'error');
+      CONFIG.targetAddress = getAddress(addr.trim());
+    } catch {
+      log('Invalid! Using random.', 'error');
       CONFIG.sendMode = 'random-generated';
     }
-  } else if (modeInput === '2') {
+  } else if (mode === '2') {
     CONFIG.sendMode = 'random-from-file';
-    log('Mode: Random dari wallet.txt', 'success');
   } else {
     CONFIG.sendMode = 'random-generated';
-    log('Mode: Generate random address', 'success');
   }
 
-  // Jumlah DIAM
   console.log('\n' + '─'.repeat(60));
-  console.log('\x1b[1m💰 Jumlah DIAM:\x1b[0m');
+  let amountType = await question('💰 Amount: 1=Fixed, 2=Random [1]: ');
   
-  let amountType = await question('\n  1. Fixed\n  2. Random\n\nPilih (1/2) [default: 1]: ');
-  amountType = amountType.trim() || '1';
-  
-  if (amountType === '2') {
-    let minAmount = await question('\n📉 Min (0.001): ');
-    minAmount = parseFloat(minAmount.trim() || '0.001');
-    
-    let maxAmount = await question('📈 Max (0.01): ');
-    maxAmount = parseFloat(maxAmount.trim() || '0.01');
-    
-    if (minAmount >= maxAmount) {
-      CONFIG.sendAmountMin = 0.001;
-      CONFIG.sendAmountMax = 0.01;
-    } else {
-      CONFIG.sendAmountMin = minAmount;
-      CONFIG.sendAmountMax = maxAmount;
-    }
-    
-    log(`Amount: ${CONFIG.sendAmountMin} - ${CONFIG.sendAmountMax} DIAM`, 'success');
+  if (amountType.trim() === '2') {
+    let min = parseFloat((await question('Min: ')).trim() || '0.001');
+    let max = parseFloat((await question('Max: ')).trim() || '0.01');
+    CONFIG.sendAmountMin = min;
+    CONFIG.sendAmountMax = max;
   } else {
-    let fixedAmount = await question('\n💵 Jumlah (0.001): ');
-    fixedAmount = parseFloat(fixedAmount.trim() || '0.001');
-    CONFIG.sendAmountMin = fixedAmount;
-    CONFIG.sendAmountMax = fixedAmount;
-    log(`Amount: ${fixedAmount} DIAM`, 'success');
+    let fixed = parseFloat((await question('Amount: ')).trim() || '0.001');
+    CONFIG.sendAmountMin = fixed;
+    CONFIG.sendAmountMax = fixed;
   }
 
-  // Berapa kali
   console.log('\n' + '─'.repeat(60));
-  let sendCount = await question('🔁 Berapa kali per account? [1]: ');
-  sendCount = parseInt(sendCount.trim() || '1');
-  CONFIG.sendCount = sendCount > 0 ? sendCount : 1;
-  log(`Send: ${CONFIG.sendCount}x per account`, 'success');
+  let count = parseInt((await question('🔁 Berapa kali per account? [1]: ')).trim() || '1');
+  CONFIG.sendCount = count > 0 ? count : 1;
 
-  // Delays - MINIMUM 90 detik untuk bypass Cloudflare
   console.log('\n' + '─'.repeat(60));
-  console.log('\x1b[1m⏱️  Delay Settings:\x1b[0m');
-  console.log('\x1b[33m⚠️  Minimum 90 detik untuk bypass Cloudflare!\x1b[0m\n');
+  let delaySend = parseInt((await question('⏳ Delay antar tx (detik) [90]: ')).trim() || '90');
+  CONFIG.delayBetweenSends = Math.max(delaySend, 60) * 1000;
   
-  let delaySend = await question('⏳ Delay antar transaksi (detik) [90]: ');
-  delaySend = parseInt(delaySend.trim() || '90');
-  if (delaySend < 90) {
-    log('⚠️  Delay minimal 90 detik! Auto-set to 90s', 'warn');
-    delaySend = 90;
-  }
-  CONFIG.delayBetweenSends = delaySend * 1000;
-  
-  let delayAccount = await question('⏳ Delay antar account (detik) [90]: ');
-  delayAccount = parseInt(delayAccount.trim() || '90');
-  if (delayAccount < 90) {
-    log('⚠️  Delay minimal 90 detik! Auto-set to 90s', 'warn');
-    delayAccount = 90;
-  }
-  CONFIG.delayBetweenAccounts = delayAccount * 1000;
-  
-  log(`Delays: ${delaySend}s / ${delayAccount}s`, 'success');
+  let delayAcc = parseInt((await question('⏳ Delay antar account (detik) [90]: ')).trim() || '90');
+  CONFIG.delayBetweenAccounts = Math.max(delayAcc, 60) * 1000;
 
-  // Summary
+  console.log('\n' + '─'.repeat(60));
+  let headless = await question('🖥️  Headless mode? (y/n) [y]: ');
+  CONFIG.headless = (headless.trim().toLowerCase() || 'y') === 'y';
+
   console.log('\n' + '╔' + '═'.repeat(58) + '╗');
-  console.log('║' + ' '.repeat(15) + '\x1b[1m\x1b[35mRINGKASAN KONFIGURASI\x1b[0m' + ' '.repeat(14) + '║');
+  console.log('║' + ' '.repeat(20) + '\x1b[1mRINGKASAN\x1b[0m' + ' '.repeat(20) + '║');
   console.log('╚' + '═'.repeat(58) + '╝\n');
-  
-  console.log(`  Mode    : ${CONFIG.sendMode === 'manual' ? '🎯 ' + getShortAddress(CONFIG.targetAddress) : CONFIG.sendMode === 'random-from-file' ? '📋 wallet.txt' : '🎲 Random'}`);
-  console.log(`  Amount  : 💰 ${CONFIG.sendAmountMin}${CONFIG.sendAmountMin !== CONFIG.sendAmountMax ? ' - ' + CONFIG.sendAmountMax : ''} DIAM`);
-  console.log(`  Count   : 🔁 ${CONFIG.sendCount}x`);
-  console.log(`  Delays  : ⏱️  ${CONFIG.delayBetweenSends/1000}s / ${CONFIG.delayBetweenAccounts/1000}s`);
-  console.log(`  Retry   : 🔄 ${CONFIG.retryAttempts}x with backoff`);
+  console.log(`  Mode     : ${CONFIG.sendMode}`);
+  console.log(`  Amount   : ${CONFIG.sendAmountMin}-${CONFIG.sendAmountMax}`);
+  console.log(`  Count    : ${CONFIG.sendCount}x`);
+  console.log(`  Delays   : ${CONFIG.delayBetweenSends/1000}s / ${CONFIG.delayBetweenAccounts/1000}s`);
+  console.log(`  Headless : ${CONFIG.headless ? 'Yes' : 'No (visible)'}`);
   console.log('\n' + '─'.repeat(60) + '\n');
 
   let confirm = await question('✅ Continue? (y/n) [y]: ');
@@ -614,53 +530,71 @@ async function askConfiguration() {
 // MAIN PROCESS
 // ============================================================
 
-async function processAccount(address, recipients, proxyUrl, accountIndex, totalAccounts) {
-  console.log('\n' + '╔' + '═'.repeat(58) + '╗');
-  console.log(`║  \x1b[1m\x1b[35mAccount ${accountIndex + 1}/${totalAccounts}: ${getShortAddress(address)}\x1b[0m${' '.repeat(58 - 25 - String(accountIndex + 1).length - String(totalAccounts).length - getShortAddress(address).length)}║`);
-  console.log('╚' + '═'.repeat(58) + '╝');
-
-  const loginSuccess = await loginAccount(address, proxyUrl);
-  if (!loginSuccess) {
-    log(`Skipping account ${accountIndex + 1}`, 'error');
-    return;
-  }
-
-  const balance = await getBalance(address, proxyUrl);
-  log(`Balance: 💰 ${balance.toFixed(4)} DIAM`, 'info');
-
-  let successCount = 0;
-  for (let i = 0; i < CONFIG.sendCount; i++) {
-    let recipient;
-    if (CONFIG.sendMode === 'manual') {
-      recipient = CONFIG.targetAddress;
-    } else if (CONFIG.sendMode === 'random-generated') {
-      recipient = generateRandomAddress();
-    } else {
-      do {
-        recipient = recipients[Math.floor(Math.random() * recipients.length)];
-      } while (recipient.toLowerCase() === address.toLowerCase());
-    }
-
-    const amount = randomAmount(CONFIG.sendAmountMin, CONFIG.sendAmountMax);
-
-    console.log('\n' + '┌' + '─'.repeat(58) + '┐');
-    console.log(`│  \x1b[1mTx ${i + 1}/${CONFIG.sendCount}\x1b[0m${' '.repeat(58 - 8 - String(i + 1).length - String(CONFIG.sendCount).length)}│`);
-    console.log('└' + '─'.repeat(58) + '┘');
-    
-    const success = await sendDiam(address, recipient, amount, proxyUrl);
-    if (success) successCount++;
-
-    if (i < CONFIG.sendCount - 1) {
-      await countdown(CONFIG.delayBetweenSends / 1000, 'Next tx in');
-    }
-  }
-
-  console.log('\n' + '─'.repeat(60));
-  log(`Summary: ${successCount}/${CONFIG.sendCount} successful ✨`, 'success');
+async function processAccount(address, recipients, proxyUrl, index, total) {
+  let page = null;
   
-  const finalBalance = await getBalance(address, proxyUrl);
-  log(`Final: 💰 ${finalBalance.toFixed(4)} DIAM`, 'info');
-  console.log('─'.repeat(60));
+  try {
+    console.log('\n' + '╔' + '═'.repeat(58) + '╗');
+    console.log(`║  \x1b[1m\x1b[35mAccount ${index + 1}/${total}: ${getShortAddress(address)}\x1b[0m` + ' '.repeat(58 - 21 - String(index+1).length - String(total).length - getShortAddress(address).length) + '║');
+    console.log('╚' + '═'.repeat(58) + '╝');
+
+    // Create new page
+    page = await browser.newPage();
+    
+    // Set viewport
+    await page.setViewport({ width: 1920, height: 1080 });
+
+    // Login
+    const loginSuccess = await loginWithBrowser(page, address);
+    if (!loginSuccess) {
+      log(`Skipping account ${index + 1}`, 'error');
+      return;
+    }
+
+    // Get balance
+    const balance = await getBalanceWithPage(page, address);
+    log(`Balance: 💰 ${balance.toFixed(4)} DIAM`, 'info');
+
+    let successCount = 0;
+    
+    for (let i = 0; i < CONFIG.sendCount; i++) {
+      let recipient;
+      
+      if (CONFIG.sendMode === 'manual') {
+        recipient = CONFIG.targetAddress;
+      } else if (CONFIG.sendMode === 'random-generated') {
+        recipient = generateRandomAddress();
+      } else {
+        do {
+          recipient = recipients[Math.floor(Math.random() * recipients.length)];
+        } while (recipient.toLowerCase() === address.toLowerCase());
+      }
+
+      const amount = randomAmount(CONFIG.sendAmountMin, CONFIG.sendAmountMax);
+
+      console.log(`\n┌─ Tx ${i + 1}/${CONFIG.sendCount} ─┐`);
+      
+      const success = await sendDiamWithPage(page, address, recipient, amount);
+      if (success) successCount++;
+
+      if (i < CONFIG.sendCount - 1) {
+        await countdown(CONFIG.delayBetweenSends / 1000, 'Next tx');
+      }
+    }
+
+    console.log('\n' + '─'.repeat(60));
+    log(`Summary: ${successCount}/${CONFIG.sendCount} success`, 'success');
+    
+    const finalBalance = await getBalanceWithPage(page, address);
+    log(`Final: 💰 ${finalBalance.toFixed(4)} DIAM`, 'info');
+    
+  } catch (error) {
+    log(`Process error: ${error.message}`, 'error');
+  } finally {
+    if (page) {
+      await page.close();
+    }
+  }
 }
 
 async function main() {
@@ -672,25 +606,19 @@ async function main() {
   const proxies = loadProxies();
 
   if (addresses.length === 0) {
-    log('No addresses in user.txt!', 'error');
+    log('No addresses!', 'error');
     rl.close();
     return;
   }
 
-  console.log(`\n📊 Accounts: \x1b[1m${addresses.length}\x1b[0m`);
-  console.log(`🌐 Proxies: \x1b[1m${proxies.length || 'None (Direct connection)'}\x1b[0m`);
-  console.log(`🛡️  Anti-CF: \x1b[1mEnabled (${CONFIG.retryAttempts}x retry)\x1b[0m\n`);
+  console.log(`\n📊 Accounts: ${addresses.length}`);
+  console.log(`🌐 Proxies: ${proxies.length || 'None'}`);
+  console.log(`🌐 Engine: Puppeteer + Stealth\n`);
 
   const confirmed = await askConfiguration();
   
   if (!confirmed) {
-    log('Cancelled.', 'warn');
-    rl.close();
-    return;
-  }
-
-  if (CONFIG.sendMode === 'random-from-file' && recipients.length === 0) {
-    log('No recipients in wallet.txt!', 'error');
+    log('Cancelled', 'warn');
     rl.close();
     return;
   }
@@ -698,33 +626,41 @@ async function main() {
   rl.close();
 
   console.log('\n' + '═'.repeat(60));
-  log('🚀 Starting in 3s...', 'info');
+  log('🚀 Launching browser...', 'info');
   console.log('═'.repeat(60) + '\n');
-  await countdown(3, 'Starting');
 
-  for (let i = 0; i < addresses.length; i++) {
-    const address = addresses[i];
-    const proxyUrl = proxies.length > 0 ? proxies[i % proxies.length] : null;
-    
-    if (proxyUrl) {
-      log(`Proxy: 🌐 ${proxyUrl.substring(0, 30)}...`, 'info');
+  try {
+    const proxyUrl = proxies.length > 0 ? proxies[0] : null;
+    await initBrowser(proxyUrl);
+
+    for (let i = 0; i < addresses.length; i++) {
+      await processAccount(addresses[i], recipients, proxyUrl, i, addresses.length);
+
+      if (i < addresses.length - 1) {
+        await countdown(CONFIG.delayBetweenAccounts / 1000, 'Next account');
+      }
     }
 
-    await processAccount(address, recipients, proxyUrl, i, addresses.length);
+    console.log('\n' + '╔' + '═'.repeat(58) + '╗');
+    console.log('║' + ' '.repeat(18) + '\x1b[1m\x1b[32m🎉 DONE! 🎉\x1b[0m' + ' '.repeat(18) + '║');
+    console.log('╚' + '═'.repeat(58) + '╝\n');
 
-    if (i < addresses.length - 1) {
-      await countdown(CONFIG.delayBetweenAccounts / 1000, 'Next account');
+  } catch (error) {
+    log(`Fatal: ${error.message}`, 'error');
+  } finally {
+    if (browser) {
+      await browser.close();
+      log('Browser closed', 'info');
     }
   }
-
-  console.log('\n' + '╔' + '═'.repeat(58) + '╗');
-  console.log('║' + ' '.repeat(14) + '\x1b[1m\x1b[32m🎉 COMPLETED! 🎉\x1b[0m' + ' '.repeat(19) + '║');
-  console.log('╚' + '═'.repeat(58) + '╝\n');
 }
 
+// ============================================================
+// RUN
+// ============================================================
+
 main().catch(error => {
-  log(`Fatal: ${error.message}`, 'error');
-  console.error(error.stack);
-  rl.close();
+  console.error('Fatal error:', error);
+  if (browser) browser.close();
   process.exit(1);
 });
