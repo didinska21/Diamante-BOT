@@ -817,69 +817,105 @@ async function main() {
       await checkMainWalletBalance(proxyAuth);
       
     } else if (mode === "4") {
-      const count = parseInt(await promptUser("How many? "));
-      const referralCode = await promptUser("Referral: ");
-      if (!mainWallet) {
-        log("❌ No main wallet", 'error');
-        return;
-      }
+  const count = parseInt(await promptUser("How many? "));
+  const referralCode = await promptUser("Referral: ");
+  if (!mainWallet) {
+    log("❌ No main wallet", 'error');
+    return;
+  }
 
-      // ✅ ENSURE MAIN WALLET IS REGISTERED FIRST
-      log('\n🔧 Ensuring main wallet is registered...', 'info');
-      const mainWalletReady = await ensureMainWalletRegistered(proxyAuth);
-      
-      if (!mainWalletReady) {
-        log('❌ Main wallet registration failed!', 'error');
-        return;
-      }
+  log('\n🔧 Ensuring main wallet is registered...', 'info');
+  const mainWalletReady = await ensureMainWalletRegistered(proxyAuth);
+  
+  if (!mainWalletReady) {
+    log('❌ Main wallet registration failed!', 'error');
+    return;
+  }
 
-      console.log("\n" + "═".repeat(60));
-      log("🚀 FULL AUTO MODE", 'info');
-      console.log("═".repeat(60) + "\n");
+  console.log("\n" + "═".repeat(60));
+  log("🚀 FULL AUTO MODE", 'info');
+  console.log("═".repeat(60) + "\n");
 
-      log("📝 STEP 1: Creating...", 'info');
-      for (let i = 0; i < count; i++) {
-        console.log(`\x1b[35m┌─ ${i + 1}/${count}\x1b[0m`);
-        await createNewAccount(proxyUrl, proxyAuth, referralCode);
-        console.log(`\x1b[35m└${"─".repeat(59)}\x1b[0m\n`);
-        if (i < count - 1) await countdown(10, '⏳');
-      }
+  log("📝 STEP 1: Creating...", 'info');
+  for (let i = 0; i < count; i++) {
+    console.log(`\x1b[35m┌─ ${i + 1}/${count}\x1b[0m`);
+    await createNewAccount(proxyUrl, proxyAuth, referralCode);
+    console.log(`\x1b[35m└${"─".repeat(59)}\x1b[0m\n`);
+    if (i < count - 1) await countdown(10, '⏳');
+  }
 
-      log("\n🎁 STEP 2: Claiming...", 'info');
-      loadAddresses();
-      for (let i = 0; i < addresses.length; i++) {
-        console.log(`\x1b[35m┌─ ${i + 1}/${addresses.length}\x1b[0m`);
-        await processClaimFaucet(addresses[i], proxyAuth);
-        console.log(`\x1b[35m└${"─".repeat(59)}\x1b[0m\n`);
-        if (i < addresses.length - 1) await countdown(5, '⏳');
-      }
+  // ⬇️⬇️⬇️ TAMBAH DELAY LEBIH LAMA ⬇️⬇️⬇️
+  log("\n⏰ Waiting 60 seconds for accounts to sync...", 'wait');
+  await countdown(60, '⏳ Syncing');
+  // ⬆️⬆️⬆️ SAMPAI SINI ⬆️⬆️⬆️
 
-      log("\n💸 STEP 3: Sending to main...", 'info');
-      let totalSent = 0;
-      let successCount = 0;
-
-      for (let i = 0; i < addresses.length; i++) {
-        console.log(`\x1b[35m┌─ ${i + 1}/${addresses.length}\x1b[0m`);
-        const result = await processSendToMain(addresses[i], proxyAuth, mainWallet);
-        if (result.success) {
-          totalSent += result.amountSent;
-          successCount++;
+  log("\n🎁 STEP 2: Claiming...", 'info');
+  loadAddresses();
+  
+  let claimSuccessCount = 0;
+  for (let i = 0; i < addresses.length; i++) {
+    console.log(`\x1b[35m┌─ ${i + 1}/${addresses.length}\x1b[0m`);
+    
+    // ⬇️⬇️⬇️ RETRY LOGIC ⬇️⬇️⬇️
+    let claimSuccess = false;
+    for (let retry = 0; retry < 3; retry++) {
+      const result = await processClaimFaucet(addresses[i], proxyAuth);
+      if (result.success) {
+        claimSuccess = true;
+        claimSuccessCount++;
+        break;
+      } else if (result.alreadyClaimed) {
+        claimSuccess = true;
+        break;
+      } else {
+        if (retry < 2) {
+          log(`⏳ Retry ${retry + 1}/3 in 30 seconds...`, 'wait');
+          await countdown(30, '⏳ Retrying');
         }
-        console.log(`\x1b[35m└${"─".repeat(59)}\x1b[0m\n`);
-        if (i < addresses.length - 1) await countdown(5, '⏳');
       }
+    }
+    
+    if (!claimSuccess) {
+      log(`❌ Failed to claim after 3 retries`, 'error');
+    }
+    // ⬆️⬆️⬆️ SAMPAI SINI ⬆️⬆️⬆️
+    
+    console.log(`\x1b[35m└${"─".repeat(59)}\x1b[0m\n`);
+    if (i < addresses.length - 1) await countdown(60, '⏳');
+  }
 
-      console.log("\x1b[36m╔" + "═".repeat(58) + "╗\x1b[0m");
-      console.log("\x1b[36m║\x1b[0m  \x1b[1m\x1b[32mFULL AUTO SUMMARY\x1b[0m" + " ".repeat(38) + "\x1b[36m║\x1b[0m");
-      console.log("\x1b[36m╠" + "═".repeat(58) + "╣\x1b[0m");
-      console.log(`\x1b[36m║\x1b[0m  Created: ${count}${" ".repeat(47)}║`);
-      console.log(`\x1b[36m║\x1b[0m  Sent: ${successCount}${" ".repeat(50)}║`);
-      console.log(`\x1b[36m║\x1b[0m  Total: ${totalSent.toFixed(4)} DIAM${" ".repeat(40)}║`);
-      console.log("\x1b[36m╚" + "═".repeat(58) + "╝\x1b[0m");
-      
-      // Check final main wallet balance
-      log('\n💰 Checking final main wallet balance...', 'info');
-      await checkMainWalletBalance(proxyAuth);
+  log(`\n📊 Claim Summary: ${claimSuccessCount}/${addresses.length} successful`, 'info');
+  
+  if (claimSuccessCount === 0) {
+    log('❌ No successful claims! Skipping send step.', 'error');
+  } else {
+    log("\n💸 STEP 3: Sending to main...", 'info');
+    let totalSent = 0;
+    let successCount = 0;
+
+    for (let i = 0; i < addresses.length; i++) {
+      console.log(`\x1b[35m┌─ ${i + 1}/${addresses.length}\x1b[0m`);
+      const result = await processSendToMain(addresses[i], proxyAuth, mainWallet);
+      if (result.success) {
+        totalSent += result.amountSent;
+        successCount++;
+      }
+      console.log(`\x1b[35m└${"─".repeat(59)}\x1b[0m\n`);
+      if (i < addresses.length - 1) await countdown(60, '⏳');
+    }
+
+    console.log("\x1b[36m╔" + "═".repeat(58) + "╗\x1b[0m");
+    console.log("\x1b[36m║\x1b[0m  \x1b[1m\x1b[32mFULL AUTO SUMMARY\x1b[0m" + " ".repeat(38) + "\x1b[36m║\x1b[0m");
+    console.log("\x1b[36m╠" + "═".repeat(58) + "╣\x1b[0m");
+    console.log(`\x1b[36m║\x1b[0m  Created: ${count}${" ".repeat(47)}║`);
+    console.log(`\x1b[36m║\x1b[0m  Claimed: ${claimSuccessCount}${" ".repeat(47)}║`);
+    console.log(`\x1b[36m║\x1b[0m  Sent: ${successCount}${" ".repeat(50)}║`);
+    console.log(`\x1b[36m║\x1b[0m  Total: ${totalSent.toFixed(4)} DIAM${" ".repeat(40)}║`);
+    console.log("\x1b[36m╚" + "═".repeat(58) + "╝\x1b[0m");
+    
+    log('\n💰 Checking final main wallet balance...', 'info');
+    await checkMainWalletBalance(proxyAuth);
+    }
       
     } else if (mode === "5") {
       // NEW MODE: Check Main Wallet Balance
