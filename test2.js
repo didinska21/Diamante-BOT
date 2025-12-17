@@ -545,15 +545,17 @@ async function processSendToMain(address, proxyAuth, mainWallet) {
       const balance = await getBalanceWithBrowser(page, loginResult.userId);
       log(`💰 Balance: ${balance.toFixed(4)} DIAM`, 'info');
 
-      if (balance > 0.1) {
-        const amountToSend = balance - 0.05;
+      // ⬇️⬇️⬇️ KODE BARU (SETELAH DI-PATCH) ⬇️⬇️⬇️
+      if (balance > 0.11) {
+        const amountToSend = balance - 0.1;
         log(`📤 Sending ${amountToSend.toFixed(4)} DIAM...`, 'wait');
         const sendSuccess = await sendDiamWithBrowser(page, address, mainWallet, amountToSend, loginResult.userId);
         return { success: sendSuccess, amountSent: sendSuccess ? amountToSend : 0 };
       } else {
-        log(`⚠️  Balance too low`, 'wait');
+        log(`⚠️  Balance too low (< 0.11 DIAM)`, 'wait');
         return { success: false, lowBalance: true };
       }
+      // ⬆️⬆️⬆️ KODE BARU SELESAI ⬆️⬆️⬆️
     }
     return { success: false };
   } catch (error) {
