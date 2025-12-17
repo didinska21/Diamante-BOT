@@ -599,6 +599,27 @@ async function processSendToMain(address, proxyAuth, mainWallet) {
     }
     await page.setViewport({ width: 1920, height: 1080 });
 
+    // ⬇️⬇️⬇️ TAMBAHKAN INI: VERIFY MAIN WALLET BISA NERIMA ⬇️⬇️⬇️
+    log(`🔍 Verifying main wallet can receive...`, 'info');
+    const mainPage = await browser.newPage();
+    if (proxyAuth && proxyAuth.username && proxyAuth.password) {
+      await mainPage.authenticate({ username: proxyAuth.username, password: proxyAuth.password });
+    }
+    await mainPage.setViewport({ width: 1920, height: 1080 });
+    
+    const mainLoginResult = await loginWithBrowser(mainPage, mainWallet);
+    if (!mainLoginResult.success || !mainLoginResult.verified) {
+      log(`❌ Main wallet not ready to receive!`, 'error');
+      await mainPage.close();
+      await page.close();
+      return { success: false, mainWalletNotReady: true };
+    }
+    
+    const mainBalanceBefore = await getBalanceWithBrowser(mainPage, mainLoginResult.userId);
+    log(`💼 Main wallet balance before: ${mainBalanceBefore.toFixed(4)} DIAM`, 'info');
+    await mainPage.close();
+    // ⬆️⬆️⬆️ SAMPAI SINI ⬆️⬆️⬆️
+
     log(`📍 Address: ${getShortAddress(address)}`, 'info');
     const loginResult = await loginWithBrowser(page, address);
 
@@ -609,7 +630,34 @@ async function processSendToMain(address, proxyAuth, mainWallet) {
       if (balance > 0.11) {
         const amountToSend = balance - 0.1;
         log(`📤 Sending ${amountToSend.toFixed(4)} DIAM to main wallet...`, 'wait');
+        
         const sendSuccess = await sendDiamWithBrowser(page, address, mainWallet, amountToSend, loginResult.userId);
+        
+        if (sendSuccess) {
+          // ⬇️⬇️⬇️ VERIFY BALANCE BERTAMBAH ⬇️⬇️⬇️
+          await sleep(3000); // Wait for transaction to process
+          const verifyPage = await browser.newPage();
+          if (proxyAuth && proxyAuth.username && proxyAuth.password) {
+            await verifyPage.authenticate({ username: proxyAuth.username, password: proxyAuth.password });
+          }
+          await verifyPage.setViewport({ width: 1920, height: 1080 });
+          
+          const verifyLoginResult = await loginWithBrowser(verifyPage, mainWallet);
+          if (verifyLoginResult.success) {
+            const mainBalanceAfter = await getBalanceWithBrowser(verifyPage, verifyLoginResult.userId);
+            log(`💼 Main wallet balance after: ${mainBalanceAfter.toFixed(4)} DIAM`, 'success');
+            
+            const actualReceived = mainBalanceAfter - mainBalanceBefore;
+            if (actualReceived > 0) {
+              log(`✅ VERIFIED! Main received: ${actualReceived.toFixed(4)} DIAM`, 'success');
+            } else {
+              log(`⚠️  WARNING: Balance didn't increase!`, 'warn');
+            }
+          }
+          await verifyPage.close();
+          // ⬆️⬆️⬆️ SAMPAI SINI ⬆️⬆️⬆️
+        }
+        
         return { success: sendSuccess, amountSent: sendSuccess ? amountToSend : 0 };
       } else {
         log(`⚠️  Balance too low (< 0.11 DIAM)`, 'wait');
@@ -623,7 +671,7 @@ async function processSendToMain(address, proxyAuth, mainWallet) {
   } finally {
     if (page) await page.close();
   }
-}
+  }
 
 async function checkMainWalletBalance(proxyAuth) {
   if (!mainWallet) {
