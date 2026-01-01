@@ -373,11 +373,70 @@ async function autoLoginWithAPI(page, wallet) {
 
     log(`🔄 Reloading page to apply login...`, 'info');
     await page.reload({ waitUntil: 'networkidle0' });
-    await sleep(3000);
+    await sleep(5000);
     
     await page.screenshot({ path: `debug_after_reload_${Date.now()}.png`, fullPage: true });
 
-    log(`✅ Auto-login SUCCESS!`, 'success');
+    // Verify login - check if wallet is connected
+    log(`🔍 Verifying login status...`, 'info');
+    
+    const isLoggedIn = await page.evaluate(() => {
+      const bodyText = document.body.textContent.toLowerCase();
+      // Check for indicators that user is logged in
+      return bodyText.includes('balance') ||
+             bodyText.includes('transactions') ||
+             bodyText.includes('dashboard') ||
+             bodyText.includes('disconnect') ||
+             document.querySelector('[class*="balance"]') !== null ||
+             !bodyText.includes('connect wallet');
+    });
+    
+    if (!isLoggedIn) {
+      log(`⚠️  Page still showing CONNECT WALLET, trying manual click...`, 'warning');
+      
+      // Try to click CONNECT WALLET button
+      const connectClicked = await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const connectBtn = buttons.find(b => 
+          b.textContent.toLowerCase().includes('connect wallet')
+        );
+        if (connectBtn) {
+          connectBtn.click();
+          return true;
+        }
+        return false;
+      });
+      
+      if (connectClicked) {
+        log(`🔘 Clicked CONNECT WALLET button`, 'info');
+        await sleep(3000);
+        await page.screenshot({ path: `debug_after_connect_click_${Date.now()}.png`, fullPage: true });
+        
+        // Wait for wallet connection UI
+        await sleep(5000);
+        
+        // Reload again after connection attempt
+        await page.reload({ waitUntil: 'networkidle0' });
+        await sleep(5000);
+        await page.screenshot({ path: `debug_after_second_reload_${Date.now()}.png`, fullPage: true });
+      }
+    }
+    
+    // Final verification
+    const finalCheck = await page.evaluate(() => {
+      const bodyText = document.body.textContent.toLowerCase();
+      return !bodyText.includes('connect wallet') || 
+             bodyText.includes('balance') ||
+             bodyText.includes('disconnect');
+    });
+    
+    if (!finalCheck) {
+      log(`❌ Wallet still not connected after verification`, 'error');
+      await page.screenshot({ path: `debug_not_connected_${Date.now()}.png`, fullPage: true });
+      throw new Error('Wallet not connected - UI still showing CONNECT WALLET');
+    }
+
+    log(`✅ Auto-login SUCCESS! Wallet connected`, 'success');
     
     return {
       success: true,
@@ -455,118 +514,270 @@ async function sendTransactionViaBrowser(page) {
     
     await sleep(3000);
     
-    // 1. Click hamburger menu
+    // Take screenshot before starting
+    await page.screenshot({ path: `debug_before_menu_${Date.now()}.png`, fullPage: true });
+    
+    // 1. Click hamburger menu - Try multiple methods
     let menuOpened = false;
+    
+    // Method 1: Try standard selectors
     const menuSelectors = [
       'button[class*="menu"]',
+      'button[class*="Menu"]',
       '[class*="hamburger"]',
-      'button:has-text("☰")'
+      'button svg',
+      'header button',
+      'nav button'
     ];
     
+    log(`🔍 Method 1: Trying standard selectors...`, 'info');
     for (const selector of menuSelectors) {
-      if (await clickElement(page, selector, 'Menu')) {
-        menuOpened = true;
-        break;
+      try {
+        const elements = await page.$(selector);
+        log(`   Found ${elements.length} elements for: ${selector}`, 'info');
+        if (elements.length > 0) {
+          await elements[0].click();
+          log(`✅ Clicked menu with selector: ${selector}`, 'success');
+          menuOpened = true;
+          await sleep(CONFIG.delayAfterInput);
+          break;
+        }
+      } catch (error) {
+        log(`   Failed: ${selector}`, 'warning');
       }
     }
     
+    // Method 2: Find button in top-right corner
     if (!menuOpened) {
-      await page.evaluate(() => {
+      log(`🔍 Method 2: Looking for button in top-right corner...`, 'info');
+      menuOpened = await page.evaluate(() => {
         const buttons = Array.from(document.querySelectorAll('button'));
-        const menuBtn = buttons.find(b => 
-          b.querySelector('svg') && 
-          b.getBoundingClientRect().right > window.innerWidth - 100
-        );
-        if (menuBtn) menuBtn.click();
+        // Find button in top-right (last 100px from right edge)
+        const menuBtn = buttons.find(b => {
+          const rect = b.getBoundingClientRect();
+          return rect.right > window.innerWidth - 100 && rect.top < 100;
+        });
+        if (menuBtn) {
+          menuBtn.click();
+          return true;
+        }
+        return false;
       });
-      await sleep(CONFIG.delayAfterInput);
+      if (menuOpened) {
+        log(`✅ Clicked menu via top-right button`, 'success');
+        await sleep(CONFIG.delayAfterInput);
+      }
     }
     
-    // 2. Click Transactions
-    await page.evaluate(() => {
-      const elements = Array.from(document.querySelectorAll('a, button, div'));
+    // Method 3: Click by coordinates (fallback)
+    if (!menuOpened) {
+      log(`🔍 Method 3: Clicking by coordinates (top-right)...`, 'info');
+      const viewportWidth = await page.evaluate(() => window.innerWidth);
+      await page.mouse.click(viewportWidth - 50, 50);
+      log(`✅ Clicked at coordinates (${viewportWidth - 50}, 50)`, 'success');
+      await sleep(CONFIG.delayAfterInput);
+      menuOpened = true;
+    }
+    
+    await page.screenshot({ path: `debug_after_menu_click_${Date.now()}.png`, fullPage: true });
+    
+    // 2. Click Transactions - Multiple methods
+    log(`🔍 Looking for Transactions menu...`, 'info');
+    let txMenuClicked = false;
+    
+    // Method 1: Direct text search
+    txMenuClicked = await page.evaluate(() => {
+      const elements = Array.from(document.querySelectorAll('a, button, div, span'));
       const txElement = elements.find(el => 
         el.textContent.trim().toLowerCase() === 'transactions'
       );
-      if (txElement) txElement.click();
+      if (txElement) {
+        txElement.click();
+        return true;
+      }
+      return false;
     });
-    log(`✅ Clicked: Transactions`, 'success');
-    await sleep(CONFIG.delayAfterInput);
     
-    // 3. Click Send
-    await page.evaluate(() => {
+    if (txMenuClicked) {
+      log(`✅ Clicked: Transactions (direct text)`, 'success');
+    } else {
+      // Method 2: Partial text match
+      log(`🔍 Trying partial text match...`, 'info');
+      txMenuClicked = await page.evaluate(() => {
+        const elements = Array.from(document.querySelectorAll('a, button, div, span'));
+        const txElement = elements.find(el => 
+          el.textContent.toLowerCase().includes('transaction')
+        );
+        if (txElement) {
+          txElement.click();
+          return true;
+        }
+        return false;
+      });
+      if (txMenuClicked) {
+        log(`✅ Clicked: Transactions (partial match)`, 'success');
+      }
+    }
+    
+    if (!txMenuClicked) {
+      log(`❌ Cannot find Transactions menu`, 'error');
+      await page.screenshot({ path: `debug_no_tx_menu_${Date.now()}.png`, fullPage: true });
+      throw new Error('Transactions menu not found');
+    }
+    
+    await sleep(CONFIG.delayAfterInput);
+    await page.screenshot({ path: `debug_after_tx_click_${Date.now()}.png`, fullPage: true });
+    
+    // 3. Click Send - Multiple methods
+    log(`🔍 Looking for Send button...`, 'info');
+    let sendClicked = false;
+    
+    sendClicked = await page.evaluate(() => {
       const elements = Array.from(document.querySelectorAll('button'));
       const sendBtn = elements.find(el => 
         el.textContent.trim().toLowerCase() === 'send'
       );
-      if (sendBtn) sendBtn.click();
+      if (sendBtn) {
+        sendBtn.click();
+        return true;
+      }
+      return false;
     });
-    log(`✅ Clicked: Send button`, 'success');
-    await sleep(CONFIG.delayAfterInput);
     
-    // 4. Fill To Address
+    if (sendClicked) {
+      log(`✅ Clicked: Send button`, 'success');
+    } else {
+      log(`❌ Cannot find Send button`, 'error');
+      await page.screenshot({ path: `debug_no_send_btn_${Date.now()}.png`, fullPage: true });
+      throw new Error('Send button not found');
+    }
+    
+    await sleep(CONFIG.delayAfterInput);
+    await page.screenshot({ path: `debug_after_send_click_${Date.now()}.png`, fullPage: true });
+    
+    // 4. Fill To Address - Enhanced
+    log(`🔍 Looking for To Address field...`, 'info');
     const addressSelectors = [
       'input[placeholder*="Address"]',
       'input[placeholder*="address"]',
-      'input[name*="address"]'
+      'input[name*="address"]',
+      'input[name*="toAddress"]',
+      'input[id*="address"]',
+      'input[type="text"]'
     ];
     
     let addressFilled = false;
     for (const selector of addressSelectors) {
-      if (await typeIntoField(page, selector, CONFIG.targetAddress, 'To Address')) {
-        addressFilled = true;
-        break;
+      try {
+        const elements = await page.$(selector);
+        log(`   Found ${elements.length} inputs for: ${selector}`, 'info');
+        if (elements.length > 0) {
+          // Try first input field
+          await elements[0].click();
+          await sleep(500);
+          await elements[0].evaluate(el => el.value = '');
+          await elements[0].type(CONFIG.targetAddress, { delay: 50 });
+          log(`✅ Filled To Address with: ${selector}`, 'success');
+          addressFilled = true;
+          await sleep(CONFIG.delayAfterInput);
+          break;
+        }
+      } catch (error) {
+        log(`   Failed with: ${selector}`, 'warning');
       }
     }
     
     if (!addressFilled) {
-      throw new Error('Cannot find To Address field');
+      log(`❌ Cannot find To Address field`, 'error');
+      await page.screenshot({ path: `debug_no_address_field_${Date.now()}.png`, fullPage: true });
+      throw new Error('To Address field not found');
     }
     
-    // 5. Fill Amount
+    await page.screenshot({ path: `debug_after_address_${Date.now()}.png`, fullPage: true });
+    
+    // 5. Fill Amount - Enhanced
+    log(`🔍 Looking for Amount field...`, 'info');
     const amountSelectors = [
       'input[placeholder*="Amount"]',
       'input[placeholder*="amount"]',
-      'input[name*="amount"]'
+      'input[name*="amount"]',
+      'input[id*="amount"]',
+      'input[type="number"]'
     ];
     
     let amountFilled = false;
     for (const selector of amountSelectors) {
-      if (await typeIntoField(page, selector, CONFIG.amount, 'Amount')) {
-        amountFilled = true;
-        break;
+      try {
+        const elements = await page.$(selector);
+        log(`   Found ${elements.length} inputs for: ${selector}`, 'info');
+        if (elements.length > 0) {
+          await elements[0].click();
+          await sleep(500);
+          await elements[0].evaluate(el => el.value = '');
+          await elements[0].type(CONFIG.amount, { delay: 50 });
+          log(`✅ Filled Amount with: ${selector}`, 'success');
+          amountFilled = true;
+          await sleep(CONFIG.delayAfterInput);
+          break;
+        }
+      } catch (error) {
+        log(`   Failed with: ${selector}`, 'warning');
       }
     }
     
     if (!amountFilled) {
-      throw new Error('Cannot find Amount field');
+      log(`❌ Cannot find Amount field`, 'error');
+      await page.screenshot({ path: `debug_no_amount_field_${Date.now()}.png`, fullPage: true });
+      throw new Error('Amount field not found');
     }
     
-    // 6. Click SEND TRANSACTION
+    await page.screenshot({ path: `debug_after_amount_${Date.now()}.png`, fullPage: true });
+    
+    // 6. Click SEND TRANSACTION - Enhanced
     log('⏰ Waiting before submit...', 'wait');
     await sleep(CONFIG.delayBeforeTransfer);
     
-    await page.evaluate(() => {
+    log(`🔍 Looking for SEND TRANSACTION button...`, 'info');
+    let txSubmitted = false;
+    
+    txSubmitted = await page.evaluate(() => {
       const buttons = Array.from(document.querySelectorAll('button'));
-      const submitBtn = buttons.find(b => 
-        b.textContent.toLowerCase().includes('send transaction')
-      );
-      if (submitBtn) submitBtn.click();
+      const submitBtn = buttons.find(b => {
+        const text = b.textContent.toLowerCase();
+        return text.includes('send transaction') || 
+               text.includes('send') || 
+               text.includes('submit') ||
+               text.includes('confirm');
+      });
+      if (submitBtn) {
+        submitBtn.click();
+        return true;
+      }
+      return false;
     });
-    log(`✅ Clicked: SEND TRANSACTION`, 'success');
+    
+    if (txSubmitted) {
+      log(`✅ Clicked: SEND TRANSACTION`, 'success');
+    } else {
+      log(`❌ Cannot find SEND TRANSACTION button`, 'error');
+      await page.screenshot({ path: `debug_no_submit_btn_${Date.now()}.png`, fullPage: true });
+      throw new Error('SEND TRANSACTION button not found');
+    }
     
     // 7. Wait for confirmation
     log('⏳ Waiting for confirmation...', 'wait');
     await sleep(5000);
     
+    await page.screenshot({ path: `debug_after_submit_${Date.now()}.png`, fullPage: true });
+    
     const success = await page.evaluate(() => {
-      return document.body.textContent.toLowerCase().includes('success') ||
-             document.body.textContent.toLowerCase().includes('transaction hash');
+      const bodyText = document.body.textContent.toLowerCase();
+      return bodyText.includes('success') ||
+             bodyText.includes('transaction hash') ||
+             bodyText.includes('confirmed');
     });
     
-    await page.screenshot({ 
-      path: `tx_${Date.now()}.png`
-    });
+    await page.screenshot({ path: `tx_result_${Date.now()}.png`, fullPage: true });
     
     if (success) {
       log('✅ Transaction SUCCESS!', 'success');
@@ -574,10 +785,12 @@ async function sendTransactionViaBrowser(page) {
       // Close popup
       await page.evaluate(() => {
         const buttons = Array.from(document.querySelectorAll('button'));
-        const closeBtn = buttons.find(b => 
-          b.textContent.toLowerCase().includes('maybe later') ||
-          b.textContent.toLowerCase().includes('close')
-        );
+        const closeBtn = buttons.find(b => {
+          const text = b.textContent.toLowerCase();
+          return text.includes('maybe later') ||
+                 text.includes('close') ||
+                 text.includes('ok');
+        });
         if (closeBtn) closeBtn.click();
       });
       
@@ -589,7 +802,8 @@ async function sendTransactionViaBrowser(page) {
     
   } catch (error) {
     log(`❌ Transaction error: ${error.message}`, 'error');
-    await page.screenshot({ path: `tx_error_${Date.now()}.png` });
+    log(`❌ Stack: ${error.stack}`, 'error');
+    await page.screenshot({ path: `tx_error_${Date.now()}.png`, fullPage: true });
     return { success: false, error: error.message };
   }
 }
