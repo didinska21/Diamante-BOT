@@ -20,8 +20,8 @@ const CONFIG = {
   sendAmountMin: 1,
   sendAmountMax: 1,
   feeReserve: 0.001, // Reserve for transaction fees
-  delayBetweenSends: 90, // detik
-  maxSendsBeforeReturn: 100 // Max transfer sebelum return (safety limit)
+  delayBetweenSends: 60, // detik
+  reloginAfterSends: 150 // Relogin setiap X transfers
 };
 
 let wallet1 = "";
@@ -414,10 +414,23 @@ async function transferUntilEmpty(page, fromWallet, toWallet, fromUserId, proxyA
   let totalSent = 0;
   let sendCount = 0;
   
-  while (balance > CONFIG.feeReserve && sendCount < CONFIG.maxSendsBeforeReturn) {
+  while (balance > CONFIG.feeReserve) {
+    // Relogin setiap 150 transfers
+    if (sendCount > 0 && sendCount % CONFIG.reloginAfterSends === 0) {
+      log(`\n🔄 Relogin after ${sendCount} transfers...`, 'wait');
+      const relogin = await loginWithBrowser(page, fromWallet);
+      if (!relogin.success) {
+        log(`❌ Relogin failed, stopping`, 'error');
+        break;
+      }
+      fromUserId = relogin.userId;
+      log(`✅ Relogin success`, 'success');
+      await sleep(3000);
+    }
+    
     const amount = Math.min(randomAmount(CONFIG.sendAmountMin, CONFIG.sendAmountMax), balance - CONFIG.feeReserve);
     
-    if (amount <= 0) break;
+    if (amount < CONFIG.sendAmountMin) break;
 
     log(`📤 [${sendCount + 1}] Sending ${amount.toFixed(4)} DIAM...`, 'info');
     const sendSuccess = await sendDiamWithBrowser(page, fromWallet, toWallet, amount, fromUserId);
@@ -438,10 +451,6 @@ async function transferUntilEmpty(page, fromWallet, toWallet, fromUserId, proxyA
       log(`⚠️ Send failed, stopping`, 'wait');
       break;
     }
-  }
-  
-  if (sendCount >= CONFIG.maxSendsBeforeReturn) {
-    log(`⚠️ Reached safety limit (${CONFIG.maxSendsBeforeReturn} transfers)`, 'wait');
   }
   
   log(`\n📊 Transfer Summary:`, 'success');
