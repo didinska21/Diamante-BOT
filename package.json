@@ -1,19 +1,20 @@
 {
   "name": "diam-testnet-bot",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "type": "module",
-  "description": "DIAM Testnet Auto Bot - Modular Version",
-  "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js"
+    "cycle": "node auto-cycle.js",
+    "swap": "node wallet-swap.js",
+    "send": "node sender.js",
+    "register": "node register-claim.js",
+    "faucet": "node faucet.js"
   },
   "dependencies": {
-    "blessed": "^0.1.81",
-    "figlet": "^1.7.0",
     "axios": "^1.6.2",
+    "ethers": "^6.9.0",
     "https-proxy-agent": "^7.0.2",
     "socks-proxy-agent": "^8.0.2",
-    "ethers": "^6.9.0",
-    "@faker-js/faker": "^8.3.1"
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
   }
 }
