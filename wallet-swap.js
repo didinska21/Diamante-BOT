@@ -94,9 +94,11 @@ function loadWalletSwap() {
       log(`❌ File ${WALLET_SWAP_FILE} not found!`, 'error');
       log(`📝 Create ${WALLET_SWAP_FILE} with format:`, 'info');
       log(`   Line 1: Wallet 1 LOGIN address (untuk authenticate)`, 'info');
-      log(`   Line 2: Wallet 1 FAUCET address (untuk transfer/receive)`, 'info');
+      log(`   Line 2: Wallet 1 FAUCET address (info only - tidak dipakai transfer)`, 'info');
       log(`   Line 3: Wallet 2 LOGIN address (untuk authenticate)`, 'info');
-      log(`   Line 4: Wallet 2 FAUCET address (untuk transfer/receive)`, 'info');
+      log(`   Line 4: Wallet 2 FAUCET address (info only - tidak dipakai transfer)`, 'info');
+      log(``, 'info');
+      log(`⚠️  TRANSFER AKAN PAKAI LOGIN ADDRESS, BUKAN FAUCET ADDRESS!`, 'wait');
       return false;
     }
 
@@ -115,9 +117,11 @@ function loadWalletSwap() {
     wallet2Faucet = getAddress(lines[3]);
     
     log(`✅ Wallet 1 Login: ${getShortAddress(wallet1Login)}`, 'success');
-    log(`   Wallet 1 Faucet: ${getShortAddress(wallet1Faucet)}`, 'info');
+    log(`   Wallet 1 Faucet: ${getShortAddress(wallet1Faucet)} (info only)`, 'info');
     log(`✅ Wallet 2 Login: ${getShortAddress(wallet2Login)}`, 'success');
-    log(`   Wallet 2 Faucet: ${getShortAddress(wallet2Faucet)}`, 'info');
+    log(`   Wallet 2 Faucet: ${getShortAddress(wallet2Faucet)} (info only)`, 'info');
+    log(``, 'info');
+    log(`📌 Transfer akan menggunakan LOGIN address`, 'highlight');
     
     return true;
   } catch (error) {
@@ -414,8 +418,8 @@ async function sendDiamWithBrowser(page, toAddress, amount, userId) {
 
 // ==================== MAIN PROCESS ====================
 
-async function transferUntilEmpty(page, loginAddress, toFaucetAddress, userId, proxyAuth) {
-  log(`\n💸 Starting transfer: ${getShortAddress(loginAddress)} → ${getShortAddress(toFaucetAddress)}`, 'highlight');
+async function transferUntilEmpty(page, loginAddress, toLoginAddress, userId, proxyAuth) {
+  log(`\n💸 Starting transfer: ${getShortAddress(loginAddress)} → ${getShortAddress(toLoginAddress)}`, 'highlight');
   
   let balance = await getBalanceWithBrowser(page, userId);
   log(`💰 Starting balance: ${balance.toFixed(4)} DIAM`, 'info');
@@ -441,7 +445,7 @@ async function transferUntilEmpty(page, loginAddress, toFaucetAddress, userId, p
     if (amount < CONFIG.sendAmountMin) break;
 
     log(`📤 [${sendCount + 1}] Sending ${amount.toFixed(4)} DIAM...`, 'info');
-    const sendSuccess = await sendDiamWithBrowser(page, toFaucetAddress, amount, userId);
+    const sendSuccess = await sendDiamWithBrowser(page, toLoginAddress, amount, userId);
     
     if (sendSuccess) {
       totalSent += amount;
@@ -479,9 +483,9 @@ async function returnAllToWallet1(page, wallet2UserId, proxyAuth) {
   }
   
   const amountToReturn = balance - CONFIG.feeReserve;
-  log(`📤 Returning ${amountToReturn.toFixed(4)} DIAM → ${getShortAddress(wallet1Faucet)}`, 'info');
+  log(`📤 Returning ${amountToReturn.toFixed(4)} DIAM → ${getShortAddress(wallet1Login)}`, 'info');
   
-  const sendSuccess = await sendDiamWithBrowser(page, wallet1Faucet, amountToReturn, wallet2UserId);
+  const sendSuccess = await sendDiamWithBrowser(page, wallet1Login, amountToReturn, wallet2UserId);
   
   if (sendSuccess) {
     const finalBalance = await getBalanceWithBrowser(page, wallet2UserId);
@@ -522,7 +526,7 @@ async function runSwapCycle(proxyAuth) {
       log(`⚠️ Wallet 1 not verified, continuing anyway...`, 'wait');
     }
     
-    const phase1Result = await transferUntilEmpty(page1, wallet1Login, wallet2Faucet, login1.userId, proxyAuth);
+    const phase1Result = await transferUntilEmpty(page1, wallet1Login, wallet2Login, login1.userId, proxyAuth);
     
     await page1.close();
     page1 = null;
