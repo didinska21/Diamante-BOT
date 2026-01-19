@@ -3,8 +3,8 @@
 # Line 2 = Wallet 2 (receiver, then sender balik)
 
 # IMPORTANT: HANYA 2 BARIS! Ganti dengan address Anda:
-0x1234567890abcdef1234567890abcdef12345678
-0xabcdef1234567890abcdef1234567890abcdef12
+0xdd10086f04cdf2ea2690db11aba7567930c1d6a0
+0x6ba871b340e53d85713d7ab8241ab06b5cd9ef71
 
 # Alur:
 # 1. Wallet 1 kirim ke Wallet 2 (random amount, sampai habis)
