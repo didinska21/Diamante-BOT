@@ -1,0 +1,11 @@
+# TARGETS.TXT - Target addresses untuk auto-cycle.js
+# Format: 1 address per line (0x...)
+# Script akan random pilih dari list ini untuk mengirim DIAM
+
+# Example addresses (GANTI dengan address Anda!)
+0xfaf788b85e9e2945ecd315dda36c893c4137c27a
+0x7149623049e29d0347e3d9553740ef49dbcff414
+0xfac1ad4668b306123a7b68c309fb4df9892982f4
+
+# Tambahkan address sebanyak yang Anda mau
+# Semakin banyak = semakin diverse transfer pattern
