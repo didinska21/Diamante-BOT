@@ -1,6 +1,6 @@
 // ============================================================
 // DIAM WALLET SWAP - Ping-Pong Transfer Between 2 Wallets
-// Wallet 1 → Wallet 2 (sampai habis) → Wallet 2 → Wallet 1 (return all)
+// FIXED: Separate Login Address & Faucet/Transfer Address
 // ============================================================
 
 import fs from "fs";
@@ -13,19 +13,23 @@ puppeteer.use(StealthPlugin());
 const API_BASE_URL = "https://campapi.diamante.io/api/v1";
 const CAMPAIGN_URL = "https://campaign.diamante.io";
 const ACCOUNT_DATA_FILE = "account_data.json";
-const WALLET_SWAP_FILE = "wallet_swap.txt"; // Format: wallet1_address\nwallet2_address
+const WALLET_SWAP_FILE = "wallet_swap.txt"; // Format: 4 lines (login1, faucet1, login2, faucet2)
 const PROXY_FILE = "proxy.txt";
 
 const CONFIG = {
   sendAmountMin: 1,
   sendAmountMax: 1,
-  feeReserve: 0.001, // Reserve for transaction fees
-  delayBetweenSends: 60, // detik
-  reloginAfterSends: 150 // Relogin setiap X transfers
+  feeReserve: 0.001,
+  delayBetweenSends: 60,
+  reloginAfterSends: 150
 };
 
-let wallet1 = "";
-let wallet2 = "";
+// Wallet addresses
+let wallet1Login = "";      // Address untuk login wallet 1
+let wallet1Faucet = "";     // Address untuk transfer/faucet wallet 1
+let wallet2Login = "";      // Address untuk login wallet 2
+let wallet2Faucet = "";     // Address untuk transfer/faucet wallet 2
+
 let proxies = [];
 let accountData = {};
 let browser = null;
@@ -89,24 +93,31 @@ function loadWalletSwap() {
     if (!fs.existsSync(WALLET_SWAP_FILE)) {
       log(`❌ File ${WALLET_SWAP_FILE} not found!`, 'error');
       log(`📝 Create ${WALLET_SWAP_FILE} with format:`, 'info');
-      log(`   Line 1: Wallet 1 address (0x...)`, 'info');
-      log(`   Line 2: Wallet 2 address (0x...)`, 'info');
+      log(`   Line 1: Wallet 1 LOGIN address (untuk authenticate)`, 'info');
+      log(`   Line 2: Wallet 1 FAUCET address (untuk transfer/receive)`, 'info');
+      log(`   Line 3: Wallet 2 LOGIN address (untuk authenticate)`, 'info');
+      log(`   Line 4: Wallet 2 FAUCET address (untuk transfer/receive)`, 'info');
       return false;
     }
 
     const data = fs.readFileSync(WALLET_SWAP_FILE, "utf8");
     const lines = data.split("\n").map(line => line.trim()).filter(line => line.match(/^0x[0-9a-fA-F]{40}$/));
     
-    if (lines.length < 2) {
-      log(`❌ Need 2 wallet addresses in ${WALLET_SWAP_FILE}`, 'error');
+    if (lines.length < 4) {
+      log(`❌ Need 4 wallet addresses in ${WALLET_SWAP_FILE}`, 'error');
+      log(`   Current: ${lines.length} addresses found`, 'error');
       return false;
     }
 
-    wallet1 = getAddress(lines[0]);
-    wallet2 = getAddress(lines[1]);
+    wallet1Login = getAddress(lines[0]);
+    wallet1Faucet = getAddress(lines[1]);
+    wallet2Login = getAddress(lines[2]);
+    wallet2Faucet = getAddress(lines[3]);
     
-    log(`✅ Wallet 1: ${getShortAddress(wallet1)}`, 'success');
-    log(`✅ Wallet 2: ${getShortAddress(wallet2)}`, 'success');
+    log(`✅ Wallet 1 Login: ${getShortAddress(wallet1Login)}`, 'success');
+    log(`   Wallet 1 Faucet: ${getShortAddress(wallet1Faucet)}`, 'info');
+    log(`✅ Wallet 2 Login: ${getShortAddress(wallet2Login)}`, 'success');
+    log(`   Wallet 2 Faucet: ${getShortAddress(wallet2Faucet)}`, 'info');
     
     return true;
   } catch (error) {
@@ -190,7 +201,7 @@ async function initBrowser(proxyUrl = null) {
 
 // ==================== API FUNCTIONS ====================
 
-async function loginWithBrowser(page, address) {
+async function loginWithBrowser(page, loginAddress) {
   try {
     await page.setRequestInterception(true);
     let capturedToken = null;
@@ -214,7 +225,7 @@ async function loginWithBrowser(page, address) {
     await page.goto(CAMPAIGN_URL, { waitUntil: 'networkidle0', timeout: 90000 });
     await sleep(5000);
 
-    const checksummedAddress = getAddress(address);
+    const checksummedAddress = getAddress(loginAddress);
     let deviceId = accountData[checksummedAddress.toLowerCase()];
     if (!deviceId) {
       deviceId = `DEV${Math.random().toString(36).substr(2, 8).toUpperCase()}`;
@@ -240,7 +251,7 @@ async function loginWithBrowser(page, address) {
       city: "Unknown"
     };
 
-    log(`🔄 Sending login request...`, 'info');
+    log(`🔄 Sending login request for ${getShortAddress(loginAddress)}...`, 'info');
     
     const response = await page.evaluate(async (apiUrl, data) => {
       try {
@@ -278,7 +289,6 @@ async function loginWithBrowser(page, address) {
       }
     }, `${API_BASE_URL}/user/connect-wallet`, payload);
 
-    // Validasi response
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -294,7 +304,6 @@ async function loginWithBrowser(page, address) {
     
     await sleep(2000);
     
-    // Capture access token
     let accessToken = capturedToken;
     if (!accessToken) {
       const cookies = await page.cookies();
@@ -364,7 +373,7 @@ async function getBalanceWithBrowser(page, userId) {
   }
 }
 
-async function sendDiamWithBrowser(page, fromAddress, toAddress, amount, userId) {
+async function sendDiamWithBrowser(page, toAddress, amount, userId) {
   try {
     const payload = { 
       toAddress: getAddress(toAddress), 
@@ -405,25 +414,24 @@ async function sendDiamWithBrowser(page, fromAddress, toAddress, amount, userId)
 
 // ==================== MAIN PROCESS ====================
 
-async function transferUntilEmpty(page, fromWallet, toWallet, fromUserId, proxyAuth) {
-  log(`\n💸 Starting transfer: ${getShortAddress(fromWallet)} → ${getShortAddress(toWallet)}`, 'highlight');
+async function transferUntilEmpty(page, loginAddress, toFaucetAddress, userId, proxyAuth) {
+  log(`\n💸 Starting transfer: ${getShortAddress(loginAddress)} → ${getShortAddress(toFaucetAddress)}`, 'highlight');
   
-  let balance = await getBalanceWithBrowser(page, fromUserId);
+  let balance = await getBalanceWithBrowser(page, userId);
   log(`💰 Starting balance: ${balance.toFixed(4)} DIAM`, 'info');
   
   let totalSent = 0;
   let sendCount = 0;
   
   while (balance > CONFIG.feeReserve) {
-    // Relogin setiap 150 transfers
     if (sendCount > 0 && sendCount % CONFIG.reloginAfterSends === 0) {
       log(`\n🔄 Relogin after ${sendCount} transfers...`, 'wait');
-      const relogin = await loginWithBrowser(page, fromWallet);
+      const relogin = await loginWithBrowser(page, loginAddress);
       if (!relogin.success) {
         log(`❌ Relogin failed, stopping`, 'error');
         break;
       }
-      fromUserId = relogin.userId;
+      userId = relogin.userId;
       log(`✅ Relogin success`, 'success');
       await sleep(3000);
     }
@@ -433,17 +441,15 @@ async function transferUntilEmpty(page, fromWallet, toWallet, fromUserId, proxyA
     if (amount < CONFIG.sendAmountMin) break;
 
     log(`📤 [${sendCount + 1}] Sending ${amount.toFixed(4)} DIAM...`, 'info');
-    const sendSuccess = await sendDiamWithBrowser(page, fromWallet, toWallet, amount, fromUserId);
+    const sendSuccess = await sendDiamWithBrowser(page, toFaucetAddress, amount, userId);
     
     if (sendSuccess) {
       totalSent += amount;
       sendCount++;
       
-      // Update balance
-      balance = await getBalanceWithBrowser(page, fromUserId);
+      balance = await getBalanceWithBrowser(page, userId);
       log(`💰 Remaining: ${balance.toFixed(4)} DIAM`, 'info');
       
-      // Delay
       if (balance > CONFIG.feeReserve) {
         await countdown(CONFIG.delayBetweenSends, '⏳ Next send in');
       }
@@ -473,9 +479,9 @@ async function returnAllToWallet1(page, wallet2UserId, proxyAuth) {
   }
   
   const amountToReturn = balance - CONFIG.feeReserve;
-  log(`📤 Returning ${amountToReturn.toFixed(4)} DIAM → ${getShortAddress(wallet1)}`, 'info');
+  log(`📤 Returning ${amountToReturn.toFixed(4)} DIAM → ${getShortAddress(wallet1Faucet)}`, 'info');
   
-  const sendSuccess = await sendDiamWithBrowser(page, wallet2, wallet1, amountToReturn, wallet2UserId);
+  const sendSuccess = await sendDiamWithBrowser(page, wallet1Faucet, amountToReturn, wallet2UserId);
   
   if (sendSuccess) {
     const finalBalance = await getBalanceWithBrowser(page, wallet2UserId);
@@ -504,9 +510,8 @@ async function runSwapCycle(proxyAuth) {
     }
     await page1.setViewport({ width: 1920, height: 1080 });
     
-    // Login Wallet 1
-    log(`🔐 Logging in Wallet 1...`, 'info');
-    const login1 = await loginWithBrowser(page1, wallet1);
+    log(`🔐 Logging in Wallet 1 (${getShortAddress(wallet1Login)})...`, 'info');
+    const login1 = await loginWithBrowser(page1, wallet1Login);
     
     if (!login1.success) {
       log(`❌ Wallet 1 login failed: ${login1.error || 'Unknown error'}`, 'error');
@@ -517,8 +522,7 @@ async function runSwapCycle(proxyAuth) {
       log(`⚠️ Wallet 1 not verified, continuing anyway...`, 'wait');
     }
     
-    // Transfer Wallet 1 → Wallet 2 until empty
-    const phase1Result = await transferUntilEmpty(page1, wallet1, wallet2, login1.userId, proxyAuth);
+    const phase1Result = await transferUntilEmpty(page1, wallet1Login, wallet2Faucet, login1.userId, proxyAuth);
     
     await page1.close();
     page1 = null;
@@ -533,7 +537,6 @@ async function runSwapCycle(proxyAuth) {
     log("🟢 PHASE 2: Wallet 2 → Wallet 1 (Return All)", 'highlight');
     console.log("═".repeat(70));
     
-    // Wait before starting Phase 2
     await countdown(60, '⏳ Preparing Phase 2 in');
     
     page2 = await browser.newPage();
@@ -542,9 +545,8 @@ async function runSwapCycle(proxyAuth) {
     }
     await page2.setViewport({ width: 1920, height: 1080 });
     
-    // Login Wallet 2
-    log(`🔐 Logging in Wallet 2...`, 'info');
-    const login2 = await loginWithBrowser(page2, wallet2);
+    log(`🔐 Logging in Wallet 2 (${getShortAddress(wallet2Login)})...`, 'info');
+    const login2 = await loginWithBrowser(page2, wallet2Login);
     
     if (!login2.success) {
       log(`❌ Wallet 2 login failed: ${login2.error || 'Unknown error'}`, 'error');
@@ -555,7 +557,6 @@ async function runSwapCycle(proxyAuth) {
       log(`⚠️ Wallet 2 not verified, continuing anyway...`, 'wait');
     }
     
-    // Return all from Wallet 2 → Wallet 1
     const phase2Result = await returnAllToWallet1(page2, login2.userId, proxyAuth);
     
     await page2.close();
@@ -608,9 +609,7 @@ async function main() {
 
   try {
     await runSwapCycle(proxyAuth);
-    
     log('\n✅ Swap cycle completed!', 'success');
-    
   } catch (error) {
     log(`Fatal: ${error.message}`, 'error');
   } finally {
