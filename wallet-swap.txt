@@ -1,0 +1,11 @@
+# WALLET_SWAP.TXT - 2 wallets untuk ping-pong transfer
+# Line 1 = Wallet 1 (sender pertama)
+# Line 2 = Wallet 2 (receiver, then sender balik)
+
+# IMPORTANT: HANYA 2 BARIS! Ganti dengan address Anda:
+0x1234567890abcdef1234567890abcdef12345678
+0xabcdef1234567890abcdef1234567890abcdef12
+
+# Alur:
+# 1. Wallet 1 kirim ke Wallet 2 (random amount, sampai habis)
+# 2. Wallet 2 kirim balik SEMUA ke Wallet 1 (sisakan fee saja)
