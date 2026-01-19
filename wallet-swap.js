@@ -17,9 +17,9 @@ const WALLET_SWAP_FILE = "wallet_swap.txt"; // Format: wallet1_address\nwallet2_
 const PROXY_FILE = "proxy.txt";
 
 const CONFIG = {
-  sendAmountMin: 0.001,
-  sendAmountMax: 0.01,
-  feeReserve: 0.05, // Reserve for transaction fees
+  sendAmountMin: 1,
+  sendAmountMax: 1,
+  feeReserve: 0.001, // Reserve for transaction fees
   delayBetweenSends: 90, // detik
   maxSendsBeforeReturn: 100 // Max transfer sebelum return (safety limit)
 };
@@ -278,29 +278,15 @@ async function loginWithBrowser(page, address) {
       }
     }, `${API_BASE_URL}/user/connect-wallet`, payload);
 
-    // Debug logging
-    log(`📊 Response status: ${response.status}`, 'info');
-    log(`📊 Response data: ${JSON.stringify(response.data)}`, 'info');
-
-    // Validasi response lebih detail
+    // Validasi response
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${JSON.stringify(response.data)}`);
+      throw new Error(`HTTP ${response.status}`);
     }
-
-    if (!response.data) {
-      throw new Error('Empty response data');
+    if (!response.data || !response.data.success) {
+      throw new Error(response.data?.message || 'Login failed');
     }
-
-    if (!response.data.success) {
-      throw new Error(`API Error: ${response.data.message || 'Unknown error'}`);
-    }
-
-    if (!response.data.data) {
-      throw new Error('Missing data object in response');
-    }
-
-    if (!response.data.data.userId) {
-      throw new Error('Missing userId in response');
+    if (!response.data.data || !response.data.data.userId) {
+      throw new Error('Invalid response data');
     }
 
     const userId = response.data.data.userId;
@@ -336,7 +322,7 @@ async function loginWithBrowser(page, address) {
       });
     }
 
-    log(`✅ Login: ${getShortAddress(checksummedAddress)} | UserId: ${userId}`, 'success');
+    log(`✅ Login success | UserId: ${userId}`, 'success');
     
     return { 
       success: true, 
