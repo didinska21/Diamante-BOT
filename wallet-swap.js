@@ -223,37 +223,92 @@ async function loginWithBrowser(page, address) {
     }
 
     const payload = {
-      address: checksummedAddress, deviceId: deviceId, deviceSource: "web_app", deviceType: "Windows",
-      browser: "Chrome", ipAddress: "0.0.0.0", latitude: 12.9715987, longitude: 77.5945627,
-      countryCode: "Unknown", country: "Unknown", continent: "Unknown", continentCode: "Unknown",
-      region: "Unknown", regionCode: "Unknown", city: "Unknown"
+      address: checksummedAddress, 
+      deviceId: deviceId, 
+      deviceSource: "web_app", 
+      deviceType: "Windows",
+      browser: "Chrome", 
+      ipAddress: "0.0.0.0", 
+      latitude: 12.9715987, 
+      longitude: 77.5945627,
+      countryCode: "Unknown", 
+      country: "Unknown", 
+      continent: "Unknown", 
+      continentCode: "Unknown",
+      region: "Unknown", 
+      regionCode: "Unknown", 
+      city: "Unknown"
     };
 
+    log(`🔄 Sending login request...`, 'info');
+    
     const response = await page.evaluate(async (apiUrl, data) => {
       try {
         const res = await fetch(apiUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json', 
+            'Accept': 'application/json' 
+          },
           body: JSON.stringify(data),
           credentials: 'include'
         });
+        
         const text = await res.text();
         let jsonData;
-        try { jsonData = JSON.parse(text); } catch { jsonData = { error: 'Parse failed' }; }
-        return { status: res.status, ok: res.ok, data: jsonData };
+        
+        try { 
+          jsonData = JSON.parse(text); 
+        } catch { 
+          jsonData = { error: 'Parse failed', rawText: text }; 
+        }
+        
+        return { 
+          status: res.status, 
+          ok: res.ok, 
+          data: jsonData,
+          headers: Object.fromEntries(res.headers.entries())
+        };
       } catch (error) {
-        return { status: 0, ok: false, error: error.message };
+        return { 
+          status: 0, 
+          ok: false, 
+          error: error.message 
+        };
       }
     }, `${API_BASE_URL}/user/connect-wallet`, payload);
 
-    if (!response.ok || !response.data?.success) {
-      throw new Error(`Login failed: ${JSON.stringify(response.data)}`);
+    // Debug logging
+    log(`📊 Response status: ${response.status}`, 'info');
+    log(`📊 Response data: ${JSON.stringify(response.data)}`, 'info');
+
+    // Validasi response lebih detail
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${JSON.stringify(response.data)}`);
+    }
+
+    if (!response.data) {
+      throw new Error('Empty response data');
+    }
+
+    if (!response.data.success) {
+      throw new Error(`API Error: ${response.data.message || 'Unknown error'}`);
+    }
+
+    if (!response.data.data) {
+      throw new Error('Missing data object in response');
+    }
+
+    if (!response.data.data.userId) {
+      throw new Error('Missing userId in response');
     }
 
     const userId = response.data.data.userId;
     const isSocialExists = response.data.data.isSocialExists;
+    
     await sleep(2000);
     
+    // Capture access token
     let accessToken = capturedToken;
     if (!accessToken) {
       const cookies = await page.cookies();
@@ -266,19 +321,33 @@ async function loginWithBrowser(page, address) {
         return match ? match[1] : null;
       });
     }
-    if (!accessToken) throw new Error('Could not capture access token');
-
-    await page.setCookie({
-      name: 'access_token', value: accessToken, domain: '.diamante.io',
-      path: '/', httpOnly: false, secure: true, sameSite: 'None'
-    });
-
-    log(`✅ Login: ${getShortAddress(checksummedAddress)}`, 'success');
     
-    return { success: true, verified: isSocialExists === "VERIFIED", userId, accessToken };
+    if (!accessToken) {
+      log('⚠️ Could not capture access token, continuing anyway...', 'wait');
+    } else {
+      await page.setCookie({
+        name: 'access_token', 
+        value: accessToken, 
+        domain: '.diamante.io',
+        path: '/', 
+        httpOnly: false, 
+        secure: true, 
+        sameSite: 'None'
+      });
+    }
+
+    log(`✅ Login: ${getShortAddress(checksummedAddress)} | UserId: ${userId}`, 'success');
+    
+    return { 
+      success: true, 
+      verified: isSocialExists === "VERIFIED", 
+      userId, 
+      accessToken 
+    };
+    
   } catch (error) {
-    log(`Login failed: ${error.message}`, 'error');
-    return { success: false };
+    log(`❌ Login failed: ${error.message}`, 'error');
+    return { success: false, error: error.message };
   }
 }
 
@@ -287,19 +356,21 @@ async function getBalanceWithBrowser(page, userId) {
     const response = await page.evaluate(async (apiUrl, uid) => {
       try {
         const res = await fetch(`${apiUrl}/transaction/get-balance/${uid}`, {
-          method: 'GET', headers: { 'Accept': 'application/json' }, credentials: 'include'
+          method: 'GET', 
+          headers: { 'Accept': 'application/json' }, 
+          credentials: 'include'
         });
         const data = await res.json();
-        return { ok: res.ok, data };
+        return { ok: res.ok, status: res.status, data };
       } catch (error) {
         return { ok: false, error: error.message };
       }
     }, API_BASE_URL, userId);
 
-    if (response.ok && response.data.success) {
+    if (response.ok && response.data && response.data.success) {
       return response.data.data.balance;
     } else {
-      throw new Error(response.data?.message || 'Failed to get balance');
+      throw new Error(response.data?.message || `HTTP ${response.status}`);
     }
   } catch (error) {
     log(`Failed to get balance: ${error.message}`, 'error');
@@ -309,28 +380,35 @@ async function getBalanceWithBrowser(page, userId) {
 
 async function sendDiamWithBrowser(page, fromAddress, toAddress, amount, userId) {
   try {
-    const payload = { toAddress: getAddress(toAddress), amount: amount, userId: userId };
+    const payload = { 
+      toAddress: getAddress(toAddress), 
+      amount: amount, 
+      userId: userId 
+    };
 
     const response = await page.evaluate(async (apiUrl, data) => {
       try {
         const res = await fetch(apiUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json', 
+            'Accept': 'application/json' 
+          },
           body: JSON.stringify(data),
           credentials: 'include'
         });
         const jsonData = await res.json();
-        return { ok: res.ok, data: jsonData };
+        return { ok: res.ok, status: res.status, data: jsonData };
       } catch (error) {
         return { ok: false, error: error.message };
       }
     }, `${API_BASE_URL}/transaction/transfer`, payload);
 
-    if (response.ok && response.data.success) {
+    if (response.ok && response.data && response.data.success) {
       log(`✅ Sent ${amount.toFixed(4)} DIAM → ${getShortAddress(toAddress)}`, 'success');
       return true;
     } else {
-      log(`❌ Send failed: ${response.data?.message}`, 'error');
+      log(`❌ Send failed: ${response.data?.message || 'Unknown error'}`, 'error');
       return false;
     }
   } catch (error) {
@@ -434,9 +512,14 @@ async function runSwapCycle(proxyAuth) {
     // Login Wallet 1
     log(`🔐 Logging in Wallet 1...`, 'info');
     const login1 = await loginWithBrowser(page1, wallet1);
-    if (!login1.success || !login1.verified) {
-      log(`❌ Wallet 1 login failed`, 'error');
+    
+    if (!login1.success) {
+      log(`❌ Wallet 1 login failed: ${login1.error || 'Unknown error'}`, 'error');
       return;
+    }
+    
+    if (!login1.verified) {
+      log(`⚠️ Wallet 1 not verified, continuing anyway...`, 'wait');
     }
     
     // Transfer Wallet 1 → Wallet 2 until empty
@@ -467,9 +550,14 @@ async function runSwapCycle(proxyAuth) {
     // Login Wallet 2
     log(`🔐 Logging in Wallet 2...`, 'info');
     const login2 = await loginWithBrowser(page2, wallet2);
-    if (!login2.success || !login2.verified) {
-      log(`❌ Wallet 2 login failed`, 'error');
+    
+    if (!login2.success) {
+      log(`❌ Wallet 2 login failed: ${login2.error || 'Unknown error'}`, 'error');
       return;
+    }
+    
+    if (!login2.verified) {
+      log(`⚠️ Wallet 2 not verified, continuing anyway...`, 'wait');
     }
     
     // Return all from Wallet 2 → Wallet 1
