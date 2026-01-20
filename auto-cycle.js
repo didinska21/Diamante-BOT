@@ -24,7 +24,6 @@ const CONFIG = {
   claimRetryDelay: [60, 180, 300],
   delayBeforeClaim: 60, // 1 menit sebelum claim
   delayBeforeSend: 60, // 1 menit sebelum setiap send
-  delayAfterSend: 60, // 1 menit setelah setiap send
   delayBetweenAccounts: 60,
   delay24Hours: 24 * 60 * 60
 };
@@ -453,12 +452,6 @@ async function processAccountCycle(address, proxyAuth, index, total) {
         // Update balance
         balance = await getBalanceWithBrowser(page, loginResult.userId);
         log(`💰 Remaining balance: ${balance.toFixed(4)} DIAM`, 'info');
-        
-        // WAIT 1 MINUTE AFTER SEND (only if will send again)
-        if (balance >= CONFIG.minBalanceToSend) {
-          log(`⏰ Waiting 1 minute after send...`, 'wait');
-          await countdown(CONFIG.delayAfterSend, '⏳ Next send in');
-        }
       } else {
         log(`⚠️ Send failed, stopping send cycle`, 'wait');
         break;
