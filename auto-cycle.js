@@ -1,5 +1,6 @@
 // ============================================================
 // DIAM AUTO CYCLE - Login → Claim → Send → Repeat 24/7
+// FIXED: Send 1 DIAM per transaction
 // ============================================================
 
 import fs from "fs";
@@ -13,18 +14,19 @@ const API_BASE_URL = "https://campapi.diamante.io/api/v1";
 const CAMPAIGN_URL = "https://campaign.diamante.io";
 const ACCOUNT_DATA_FILE = "account_data.json";
 const USERS_FILE = "users.txt";
-const TARGETS_FILE = "targets.txt"; // File untuk address tujuan
+const TARGETS_FILE = "targets.txt";
 const PROXY_FILE = "proxy.txt";
 
 const CONFIG = {
-  sendAmountMin: 0.001,
-  sendAmountMax: 0.01,
-  minBalanceToKeep: 0.1, // Minimum balance yang disimpan
+  sendAmount: 1, // Fixed 1 DIAM per send
+  minBalanceToSend: 1, // Minimum balance untuk melakukan send
   claimRetryMax: 3,
-  claimRetryDelay: [60, 180, 300], // 1 min, 3 min, 5 min
-  delayBetweenSends: 90, // detik
-  delayBetweenAccounts: 60, // detik
-  delay24Hours: 24 * 60 * 60 // 24 jam dalam detik
+  claimRetryDelay: [60, 180, 300],
+  delayBeforeClaim: 60, // 1 menit sebelum claim
+  delayBeforeSend: 60, // 1 menit sebelum setiap send
+  delayAfterSend: 60, // 1 menit setelah setiap send
+  delayBetweenAccounts: 60,
+  delay24Hours: 24 * 60 * 60
 };
 
 let addresses = [];
@@ -60,10 +62,6 @@ async function countdown(seconds, message) {
     await sleep(1000);
   }
   process.stdout.write(`\r${' '.repeat(80)}\r`);
-}
-
-function randomAmount(min, max) {
-  return parseFloat((Math.random() * (max - min) + min).toFixed(4));
 }
 
 // ==================== FILE LOADERS ====================
@@ -405,36 +403,47 @@ async function processAccountCycle(address, proxyAuth, index, total) {
       return { success: false, skipped: true };
     }
 
-    // 2. CLAIM FAUCET
+    // 2. WAIT 1 MINUTE BEFORE CLAIM
     log(`⏰ Waiting 1 minute before claiming...`, 'wait');
-    await countdown(60, '⏳ Preparing');
+    await countdown(CONFIG.delayBeforeClaim, '⏳ Preparing');
     
+    // 3. CLAIM FAUCET
     const claimResult = await claimFaucetWithRetry(page, loginResult.userId);
     if (!claimResult.success && !claimResult.alreadyClaimed) {
       log(`❌ Failed to claim faucet`, 'error');
       return { success: false };
     }
 
-    // 3. SEND TO TARGETS UNTIL BALANCE RUNS OUT
+    // 4. CHECK BALANCE
     let balance = await getBalanceWithBrowser(page, loginResult.userId);
+    
+    if (balance < CONFIG.minBalanceToSend) {
+      log(`⚠️ Balance ${balance.toFixed(4)} DIAM < ${CONFIG.minBalanceToSend} DIAM, skipping send`, 'wait');
+      console.log(`\x1b[35m└${"─".repeat(67)}\x1b[0m`);
+      return { success: true, totalSent: 0, sendCount: 0 };
+    }
+
+    // 5. SEND LOOP - Send 1 DIAM sampai balance < 1
     let totalSent = 0;
     let sendCount = 0;
 
     log(`\n💸 Starting send cycle...`, 'info');
     
-    while (balance > CONFIG.minBalanceToKeep) {
+    while (balance >= CONFIG.minBalanceToSend) {
       if (targetAddresses.length === 0) {
         log(`⚠️ No target addresses in ${TARGETS_FILE}`, 'wait');
         break;
       }
 
+      // WAIT 1 MINUTE BEFORE SEND
+      log(`⏰ Waiting 1 minute before send...`, 'wait');
+      await countdown(CONFIG.delayBeforeSend, '⏳ Preparing send');
+
       // Random target
       const targetAddress = targetAddresses[Math.floor(Math.random() * targetAddresses.length)];
-      const amount = Math.min(randomAmount(CONFIG.sendAmountMin, CONFIG.sendAmountMax), balance - CONFIG.minBalanceToKeep);
+      const amount = CONFIG.sendAmount; // Always 1 DIAM
       
-      if (amount <= 0) break;
-
-      log(`📤 Sending ${amount.toFixed(4)} DIAM to ${getShortAddress(targetAddress)}...`, 'info');
+      log(`📤 Sending ${amount} DIAM to ${getShortAddress(targetAddress)}...`, 'info');
       const sendSuccess = await sendDiamWithBrowser(page, address, targetAddress, amount, loginResult.userId);
       
       if (sendSuccess) {
@@ -445,9 +454,10 @@ async function processAccountCycle(address, proxyAuth, index, total) {
         balance = await getBalanceWithBrowser(page, loginResult.userId);
         log(`💰 Remaining balance: ${balance.toFixed(4)} DIAM`, 'info');
         
-        // Delay before next send
-        if (balance > CONFIG.minBalanceToKeep) {
-          await countdown(CONFIG.delayBetweenSends, '⏳ Next send in');
+        // WAIT 1 MINUTE AFTER SEND (only if will send again)
+        if (balance >= CONFIG.minBalanceToSend) {
+          log(`⏰ Waiting 1 minute after send...`, 'wait');
+          await countdown(CONFIG.delayAfterSend, '⏳ Next send in');
         }
       } else {
         log(`⚠️ Send failed, stopping send cycle`, 'wait');
@@ -514,7 +524,7 @@ async function main() {
   console.clear();
   console.log("\x1b[36m╔" + "═".repeat(68) + "╗\x1b[0m");
   console.log("\x1b[36m║\x1b[0m" + " ".repeat(12) + "\x1b[1m\x1b[33mDIAM AUTO CYCLE 24/7\x1b[0m" + " ".repeat(33) + "\x1b[36m║\x1b[0m");
-  console.log("\x1b[36m║\x1b[0m" + " ".repeat(10) + "\x1b[90mLogin → Claim → Send → Repeat\x1b[0m" + " ".repeat(27) + "\x1b[36m║\x1b[0m");
+  console.log("\x1b[36m║\x1b[0m" + " ".repeat(8) + "\x1b[90mLogin → Claim → Send 1 DIAM → Repeat\x1b[0m" + " ".repeat(21) + "\x1b[36m║\x1b[0m");
   console.log("\x1b[36m╚" + "═".repeat(68) + "╝\x1b[0m\n");
 
   loadAccountData();
@@ -534,6 +544,7 @@ async function main() {
   log(`📊 Accounts: ${addresses.length}`, 'info');
   log(`🎯 Targets: ${targetAddresses.length}`, 'info');
   log(`🌐 Proxies: ${proxies.length || 'None'}`, 'info');
+  log(`💰 Send Amount: ${CONFIG.sendAmount} DIAM (fixed)`, 'info');
 
   const proxyUrl = proxies.length > 0 ? proxies[0] : null;
   
